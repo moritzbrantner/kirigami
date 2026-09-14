@@ -1,0 +1,41 @@
+name: Build polyline cut slice
+
+on:
+  push:
+    branches:
+      - feat/polyline-cuts
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          ref: feat/polyline-cuts
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Apply slice
+        run: python3 scripts/add_polyline_slice.py
+      - name: Format
+        run: cargo fmt --all
+      - name: Lint
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace --all-targets
+      - name: WASM
+        run: cargo build -p kirigami-wasm --target wasm32-unknown-unknown --release
+      - name: Commit product changes
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add crates/kirigami-core/src/lib.rs crates/kirigami-core/src/topology.rs
+          git commit -m "Add transactional polyline cuts"
+          git push origin HEAD:feat/polyline-cuts
