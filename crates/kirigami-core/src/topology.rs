@@ -105,9 +105,9 @@ impl PlanarTopology {
         if points.iter().any(|point| !point.is_finite()) {
             return Err(TopologyError::NonFinitePoint);
         }
-        if (0..points.len()).any(|index| {
-            approximately_equal(points[index], points[(index + 1) % points.len()])
-        }) {
+        if (0..points.len())
+            .any(|index| approximately_equal(points[index], points[(index + 1) % points.len()]))
+        {
             return Err(TopologyError::DuplicateAdjacentVertex);
         }
         if !is_simple_polygon(&points) {
@@ -122,7 +122,8 @@ impl PlanarTopology {
             points.reverse();
         }
 
-        let vertex_count = u32::try_from(points.len()).map_err(|_| TopologyError::TooManyVertices)?;
+        let vertex_count =
+            u32::try_from(points.len()).map_err(|_| TopologyError::TooManyVertices)?;
         let face = FaceId(0);
         let mut vertices = Vec::with_capacity(points.len());
         let mut half_edges = Vec::with_capacity(points.len());
@@ -334,9 +335,8 @@ impl PlanarTopology {
         let start_prev = self.edge(start_out).prev;
         let end_prev = self.edge(end_out).prev;
         let side_start_to_end = self.path_side(start_out, end_vertex, start, end)?;
-        let new_face = FaceId(
-            u32::try_from(self.faces.len()).map_err(|_| TopologyError::TooManyVertices)?,
-        );
+        let new_face =
+            FaceId(u32::try_from(self.faces.len()).map_err(|_| TopologyError::TooManyVertices)?);
 
         let start_to_end = HalfEdgeId(
             u32::try_from(self.half_edges.len()).map_err(|_| TopologyError::TooManyVertices)?,
@@ -402,7 +402,8 @@ impl PlanarTopology {
                 || edge_start_vertex == end_vertex
                 || edge_end_vertex == end_vertex;
             if incident {
-                let other = if edge_start_vertex == start_vertex || edge_start_vertex == end_vertex {
+                let other = if edge_start_vertex == start_vertex || edge_start_vertex == end_vertex
+                {
                     edge_end
                 } else {
                     edge_start
@@ -616,16 +617,14 @@ fn point_on_segment(point: Point2, start: Point2, end: Point2) -> bool {
     if orientation(start, end, point).abs() > EPSILON {
         return false;
     }
-    let dot = (point.x - start.x) * (end.x - start.x)
-        + (point.y - start.y) * (end.y - start.y);
+    let dot = (point.x - start.x) * (end.x - start.x) + (point.y - start.y) * (end.y - start.y);
     let length_squared = squared_distance(start, end);
     dot >= -EPSILON && dot <= length_squared + EPSILON
 }
 
 fn point_on_polygon_boundary(point: Point2, polygon: &[Point2]) -> bool {
-    (0..polygon.len()).any(|index| {
-        point_on_segment(point, polygon[index], polygon[(index + 1) % polygon.len()])
-    })
+    (0..polygon.len())
+        .any(|index| point_on_segment(point, polygon[index], polygon[(index + 1) % polygon.len()]))
 }
 
 fn point_in_polygon(point: Point2, polygon: &[Point2]) -> bool {
@@ -714,18 +713,10 @@ mod tests {
         ])
         .unwrap();
         let second = topology
-            .split_face_with_segment(
-                FaceId(0),
-                Point2::new(0.0, -0.5),
-                Point2::new(0.0, 0.5),
-            )
+            .split_face_with_segment(FaceId(0), Point2::new(0.0, -0.5), Point2::new(0.0, 0.5))
             .unwrap();
         topology
-            .split_face_with_segment(
-                FaceId(0),
-                Point2::new(-1.0, 0.0),
-                Point2::new(0.0, 0.0),
-            )
+            .split_face_with_segment(FaceId(0), Point2::new(-1.0, 0.0), Point2::new(0.0, 0.0))
             .unwrap();
 
         topology.validate().unwrap();

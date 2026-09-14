@@ -139,9 +139,8 @@ impl fmt::Display for ModelError {
             }
             Self::SegmentEndpointOffBoundary => formatter
                 .write_str("both segment endpoints must lie on the selected panel boundary"),
-            Self::SegmentDoesNotSplitPanel => formatter.write_str(
-                "segment does not split the selected panel into two valid faces",
-            ),
+            Self::SegmentDoesNotSplitPanel => formatter
+                .write_str("segment does not split the selected panel into two valid faces"),
             Self::CannotFoldCut(operation) => write!(
                 formatter,
                 "operation {} is a cut and cannot be folded",
