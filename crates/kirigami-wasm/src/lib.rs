@@ -44,7 +44,31 @@ pub fn demo_snapshot(angle_degrees: f32, mode: &str) -> Result<String, JsValue> 
                 .map_err(js_error)?;
             None
         }
-        _ => return Err(JsValue::from_str("mode must be 'crease', 'cut', or 'hole'")),
+        "bridge" => {
+            model
+                .cut_closed_path(
+                    PanelId(0),
+                    &[
+                        Point2::new(-0.45, -0.35),
+                        Point2::new(0.45, -0.35),
+                        Point2::new(0.45, 0.35),
+                        Point2::new(-0.45, 0.35),
+                    ],
+                )
+                .map_err(js_error)?;
+            model
+                .cut_boundary_bridge(
+                    PanelId(0),
+                    &[Point2::new(-1.2, 0.0), Point2::new(-0.45, 0.0)],
+                )
+                .map_err(js_error)?;
+            None
+        }
+        _ => {
+            return Err(JsValue::from_str(
+                "mode must be 'crease', 'cut', 'hole', or 'bridge'",
+            ));
+        }
     };
     let snapshot = model.render_snapshot(fold).map_err(js_error)?;
     serde_json::to_string(&snapshot).map_err(js_error)

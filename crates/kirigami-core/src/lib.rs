@@ -69,6 +69,8 @@ pub struct Seam {
     pub kind: OperationKind,
     pub start: Point2,
     pub end: Point2,
+    /// Creases connect two panels. A cut boundary bridge can have the same panel on
+    /// both sides because it opens material without creating a second panel.
     pub panel_a: PanelId,
     pub panel_b: PanelId,
 }
@@ -322,6 +324,49 @@ impl PaperModel {
             path: canonical_path,
         });
         candidate.next_panel_id += 1;
+        candidate.next_operation_id += 1;
+        *self = candidate;
+        Ok(operation_id)
+    }
+
+    /// Cuts an open path between two distinct boundary components of one panel.
+    /// The material remains one panel; the operation opens an annulus or merges holes.
+    pub fn cut_boundary_bridge(
+        &mut self,
+        panel_id: PanelId,
+        path: &[Point2],
+    ) -> Result<OperationId, ModelError> {
+        validate_operation_path(path, OperationKind::Cut)?;
+        let mut candidate = self.clone();
+        let panel = candidate
+            .panels
+            .iter()
+            .find(|panel| panel.id == panel_id)
+            .cloned()
+            .ok_or(ModelError::UnknownPanel(panel_id))?;
+        candidate
+            .topology
+            .bridge_boundary_components_with_polyline(panel.face, path)
+            .map_err(map_split_error)?;
+
+        let operation_id = OperationId(candidate.next_operation_id);
+        for segment in path.windows(2) {
+            candidate.seams.push(Seam {
+                id: SeamId(candidate.next_seam_id),
+                operation: operation_id,
+                kind: OperationKind::Cut,
+                start: segment[0],
+                end: segment[1],
+                panel_a: panel_id,
+                panel_b: panel_id,
+            });
+            candidate.next_seam_id += 1;
+        }
+        candidate.operations.push(Operation {
+            id: operation_id,
+            kind: OperationKind::Cut,
+            path: path.to_vec(),
+        });
         candidate.next_operation_id += 1;
         *self = candidate;
         Ok(operation_id)
@@ -722,6 +767,7 @@ fn map_split_error(error: TopologyError) -> ModelError {
         | TopologyError::PolylineLeavesTopology
         | TopologyError::PolylineOverlapsBoundary
         | TopologyError::PolylineCrossingAmbiguous
+        | TopologyError::BoundaryBridgeRequiresDistinctComponents
         | TopologyError::SegmentDoesNotSplitFace
         | TopologyError::SegmentLeavesFace => ModelError::SegmentDoesNotSplitPanel,
         other => ModelError::Topology(other),
@@ -1228,6 +1274,96 @@ mod tests {
         let snapshot = model.render_snapshot(None).unwrap();
         assert_eq!(snapshot.panel_count, 2);
         assert_eq!(snapshot.component_count, 2);
+    }
+
+    #[test]
+    fn boundary_bridge_cut_opens_annulus_without_new_panel() {
+        let mut model = PaperModel::rectangle(4.0, 4.0).unwrap();
+        model
+            .cut_closed_path(
+                PanelId(0),
+                &[
+                    Point2::new(-0.5, -0.5),
+                    Point2::new(0.5, -0.5),
+                    Point2::new(0.5, 0.5),
+                    Point2::new(-0.5, 0.5),
+                ],
+            )
+            .unwrap();
+        let panel_count = model.panels().len();
+        let bridge = model
+            .cut_boundary_bridge(
+                PanelId(0),
+                &[Point2::new(-2.0, 0.0), Point2::new(-0.5, 0.0)],
+            )
+            .unwrap();
+
+        assert_eq!(model.panels().len(), panel_count);
+        assert_eq!(model.component_count(), 2);
+        assert_eq!(
+            model
+                .topology()
+                .boundary_component_count(FaceId(0))
+                .unwrap(),
+            1
+        );
+        let bridge_segments: Vec<&Seam> = model
+            .seams()
+            .iter()
+            .filter(|seam| seam.operation == bridge)
+            .collect();
+        assert_eq!(bridge_segments.len(), 1);
+        assert!(
+            bridge_segments
+                .iter()
+                .all(|seam| seam.panel_a == PanelId(0) && seam.panel_b == PanelId(0))
+        );
+        assert!(model.render_snapshot(None).is_ok());
+    }
+
+    #[test]
+    fn boundary_bridge_can_merge_two_holes_without_new_panel() {
+        let mut model = PaperModel::rectangle(6.0, 4.0).unwrap();
+        model
+            .cut_closed_path(
+                PanelId(0),
+                &[
+                    Point2::new(-1.75, -0.5),
+                    Point2::new(-0.75, -0.5),
+                    Point2::new(-0.75, 0.5),
+                    Point2::new(-1.75, 0.5),
+                ],
+            )
+            .unwrap();
+        model
+            .cut_closed_path(
+                PanelId(0),
+                &[
+                    Point2::new(0.75, -0.5),
+                    Point2::new(1.75, -0.5),
+                    Point2::new(1.75, 0.5),
+                    Point2::new(0.75, 0.5),
+                ],
+            )
+            .unwrap();
+        let before = model.panels().len();
+        model
+            .cut_boundary_bridge(
+                PanelId(0),
+                &[Point2::new(-0.75, 0.0), Point2::new(0.75, 0.0)],
+            )
+            .unwrap();
+
+        assert_eq!(model.panels().len(), before);
+        assert_eq!(
+            model
+                .topology()
+                .boundary_component_count(FaceId(0))
+                .unwrap(),
+            2
+        );
+        assert_eq!(model.component_count(), 3);
+        assert!(model.render_snapshot(None).is_ok());
     }
 
     #[test]
