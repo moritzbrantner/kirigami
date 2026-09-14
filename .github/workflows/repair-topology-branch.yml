@@ -21,133 +21,120 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
           path = Path("crates/kirigami-core/src/topology.rs")
           text = path.read_text()
 
-          old = '''        let area = signed_area(&points);
-          if area.abs() <= EPSILON {
-              return Err(TopologyError::DegeneratePolygon);
-          }
-          '''
-          new = '''        let area = signed_area(&points);
-          if area.abs() <= polygon_area_tolerance(&points) {
-              return Err(TopologyError::DegeneratePolygon);
-          }
-          '''
-          if old not in text:
-              raise SystemExit("area threshold pattern not found")
-          text = text.replace(old, new, 1)
+          if "polygon_area_tolerance(&points)" not in text:
+              text, count = re.subn(
+                  r"(?m)^        let area = signed_area\(&points\);\n        if area\.abs\(\) <= EPSILON \{",
+                  "        let area = signed_area(&points);\n        if area.abs() <= polygon_area_tolerance(&points) {",
+                  text,
+                  count=1,
+              )
+              if count != 1:
+                  raise SystemExit("area threshold pattern not found")
 
-          old = '''            if incident {
-                  let other = if edge_start_vertex == start_vertex || edge_start_vertex == end_vertex
-                  {
-                      edge_end
-                  } else {
-                      edge_start
-                  };
-                  if orientation(start, end, other).abs() <= EPSILON {
-                      return Err(TopologyError::SegmentLeavesFace);
-                  }
-                  continue;
-              }
-          '''
-          new = '''            if incident {
-                  let (shared, other, chord_other) = if edge_start_vertex == start_vertex {
-                      (start, edge_end, end)
-                  } else if edge_end_vertex == start_vertex {
-                      (start, edge_start, end)
-                  } else if edge_start_vertex == end_vertex {
-                      (end, edge_end, start)
-                  } else {
-                      (end, edge_start, start)
-                  };
-                  let edge_direction = Point2::new(other.x - shared.x, other.y - shared.y);
-                  let chord_direction =
-                      Point2::new(chord_other.x - shared.x, chord_other.y - shared.y);
-                  let overlaps_chord = orientation(start, end, other).abs() <= EPSILON
-                      && edge_direction.x * chord_direction.x
-                          + edge_direction.y * chord_direction.y
-                          > EPSILON * EPSILON;
-                  if overlaps_chord {
-                      return Err(TopologyError::SegmentLeavesFace);
-                  }
-                  continue;
-              }
-          '''
-          if old not in text:
-              raise SystemExit("incident-edge pattern not found")
-          text = text.replace(old, new, 1)
+          if "let (shared, other, chord_other)" not in text:
+              pattern = re.compile(
+                  r"(?ms)^            if incident \{\n                let other = if edge_start_vertex == start_vertex \|\| edge_start_vertex == end_vertex\n                \{\n                    edge_end\n                \} else \{\n                    edge_start\n                \};\n                if orientation\(start, end, other\)\.abs\(\) <= EPSILON \{\n                    return Err\(TopologyError::SegmentLeavesFace\);\n                \}\n                continue;\n            \}"
+              )
+              replacement = "\n".join([
+                  "            if incident {",
+                  "                let (shared, other, chord_other) = if edge_start_vertex == start_vertex {",
+                  "                    (start, edge_end, end)",
+                  "                } else if edge_end_vertex == start_vertex {",
+                  "                    (start, edge_start, end)",
+                  "                } else if edge_start_vertex == end_vertex {",
+                  "                    (end, edge_end, start)",
+                  "                } else {",
+                  "                    (end, edge_start, start)",
+                  "                };",
+                  "                let edge_direction = Point2::new(other.x - shared.x, other.y - shared.y);",
+                  "                let chord_direction =",
+                  "                    Point2::new(chord_other.x - shared.x, chord_other.y - shared.y);",
+                  "                let overlaps_chord = orientation(start, end, other).abs() <= EPSILON",
+                  "                    && edge_direction.x * chord_direction.x",
+                  "                        + edge_direction.y * chord_direction.y",
+                  "                        > EPSILON * EPSILON;",
+                  "                if overlaps_chord {",
+                  "                    return Err(TopologyError::SegmentLeavesFace);",
+                  "                }",
+                  "                continue;",
+                  "            }",
+              ])
+              text, count = pattern.subn(replacement, text, count=1)
+              if count != 1:
+                  raise SystemExit("incident-edge pattern not found")
 
-          marker = '''fn orientation(a: Point2, b: Point2, c: Point2) -> f32 {
-              (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
-          }
-          '''
-          insert = '''fn polygon_area_tolerance(points: &[Point2]) -> f32 {
-              let max_edge_squared = (0..points.len())
-                  .map(|index| squared_distance(points[index], points[(index + 1) % points.len()]))
-                  .fold(0.0_f32, f32::max);
-              max_edge_squared * f32::EPSILON * points.len() as f32 * 8.0
-          }
+          if "fn polygon_area_tolerance" not in text:
+              marker = "fn orientation(a: Point2, b: Point2, c: Point2) -> f32 {"
+              index = text.index(marker)
+              helper = "\n".join([
+                  "fn polygon_area_tolerance(points: &[Point2]) -> f32 {",
+                  "    let max_edge_squared = (0..points.len())",
+                  "        .map(|index| squared_distance(points[index], points[(index + 1) % points.len()]))",
+                  "        .fold(0.0_f32, f32::max);",
+                  "    max_edge_squared * f32::EPSILON * points.len() as f32 * 8.0",
+                  "}",
+                  "",
+              ])
+              text = text[:index] + helper + text[index:]
 
-          fn orientation(a: Point2, b: Point2, c: Point2) -> f32 {
-              (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
-          }
-          '''
-          if marker not in text:
-              raise SystemExit("orientation marker not found")
-          text = text.replace(marker, insert, 1)
+          if "fn accepts_small_non_degenerate_face" not in text:
+              marker = "    #[test]\n    fn rejects_chord_that_leaves_concave_face_without_mutation() {"
+              tests = "\n".join([
+                  "    #[test]",
+                  "    fn accepts_small_non_degenerate_face() {",
+                  "        let topology = PlanarTopology::from_polygon(vec![",
+                  "            Point2::new(0.0, 0.0),",
+                  "            Point2::new(0.001, 0.0),",
+                  "            Point2::new(0.001, 0.001),",
+                  "            Point2::new(0.0, 0.001),",
+                  "        ])",
+                  "        .unwrap();",
+                  "        assert_eq!(topology.face_count(), 1);",
+                  "        topology.validate().unwrap();",
+                  "    }",
+                  "",
+                  "    #[test]",
+                  "    fn allows_chord_continuing_past_reflex_edge() {",
+                  "        let mut topology = PlanarTopology::from_polygon(vec![",
+                  "            Point2::new(0.0, 0.0),",
+                  "            Point2::new(2.0, 0.0),",
+                  "            Point2::new(2.0, 2.0),",
+                  "            Point2::new(1.0, 2.0),",
+                  "            Point2::new(1.0, 1.0),",
+                  "            Point2::new(0.0, 1.0),",
+                  "        ])",
+                  "        .unwrap();",
+                  "        topology",
+                  "            .split_face_with_segment(",
+                  "                FaceId(0),",
+                  "                Point2::new(1.0, 1.0),",
+                  "                Point2::new(1.0, 0.0),",
+                  "            )",
+                  "            .unwrap();",
+                  "        assert_eq!(topology.face_count(), 2);",
+                  "        topology.validate().unwrap();",
+                  "    }",
+                  "",
+                  marker,
+              ])
+              if marker not in text:
+                  raise SystemExit("test insertion marker not found")
+              text = text.replace(marker, tests, 1)
 
-          test_marker = '''    #[test]
-              fn rejects_chord_that_leaves_concave_face_without_mutation() {
-          '''
-          tests = '''    #[test]
-              fn accepts_small_non_degenerate_face() {
-                  let topology = PlanarTopology::from_polygon(vec![
-                      Point2::new(0.0, 0.0),
-                      Point2::new(0.001, 0.0),
-                      Point2::new(0.001, 0.001),
-                      Point2::new(0.0, 0.001),
-                  ])
-                  .unwrap();
-                  assert_eq!(topology.face_count(), 1);
-                  topology.validate().unwrap();
-              }
-
-              #[test]
-              fn allows_chord_continuing_past_reflex_edge() {
-                  let mut topology = PlanarTopology::from_polygon(vec![
-                      Point2::new(0.0, 0.0),
-                      Point2::new(2.0, 0.0),
-                      Point2::new(2.0, 2.0),
-                      Point2::new(1.0, 2.0),
-                      Point2::new(1.0, 1.0),
-                      Point2::new(0.0, 1.0),
-                  ])
-                  .unwrap();
-                  topology
-                      .split_face_with_segment(
-                          FaceId(0),
-                          Point2::new(1.0, 1.0),
-                          Point2::new(1.0, 0.0),
-                      )
-                      .unwrap();
-                  assert_eq!(topology.face_count(), 2);
-                  topology.validate().unwrap();
-              }
-
-              #[test]
-              fn rejects_chord_that_leaves_concave_face_without_mutation() {
-          '''
-          if test_marker not in text:
-              raise SystemExit("test insertion marker not found")
-          text = text.replace(test_marker, tests, 1)
           path.write_text(text)
           PY
           cargo fmt --all
           cargo test --workspace --all-targets
       - name: Commit repair
         run: |
+          if git diff --quiet; then
+            exit 0
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add crates/kirigami-core/src/topology.rs
