@@ -6,5 +6,6 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+earcut.workspace = true
 serde.workspace = true
 three-d-core.workspace = true

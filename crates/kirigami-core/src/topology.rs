@@ -1,4 +1,5 @@
 use crate::Point2;
+use earcut::Earcut;
 use std::fmt;
 
 const EPSILON: f32 = 1.0e-5;
@@ -27,9 +28,10 @@ struct HalfEdge {
     face: FaceId,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct Face {
-    boundary: HalfEdgeId,
+    outer: HalfEdgeId,
+    holes: Vec<HalfEdgeId>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -43,6 +45,12 @@ pub struct PlanarTopology {
 pub struct FaceTriangulation {
     pub vertices: Vec<Point2>,
     pub triangles: Vec<[u32; 3]>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FaceBoundaryLoops {
+    pub outer: Vec<Point2>,
+    pub holes: Vec<Vec<Point2>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -167,7 +175,8 @@ impl PlanarTopology {
             vertices,
             half_edges,
             faces: vec![Face {
-                boundary: HalfEdgeId(0),
+                outer: HalfEdgeId(0),
+                holes: Vec::new(),
             }],
         };
         topology.validate()?;
@@ -187,76 +196,178 @@ impl PlanarTopology {
     }
 
     pub fn face_polygon(&self, face: FaceId) -> Result<Vec<Point2>, TopologyError> {
-        let edges = self.face_half_edges(face)?;
-        Ok(edges
-            .into_iter()
-            .map(|edge| self.vertex(self.edge(edge).origin).point)
-            .collect())
+        self.cycle_polygon(self.face(face)?.outer, face)
+    }
+
+    pub fn face_boundary_loops(&self, face: FaceId) -> Result<FaceBoundaryLoops, TopologyError> {
+        let face_data = self.face(face)?;
+        let outer = self.cycle_polygon(face_data.outer, face)?;
+        let holes = face_data
+            .holes
+            .iter()
+            .map(|boundary| self.cycle_polygon(*boundary, face))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(FaceBoundaryLoops { outer, holes })
     }
 
     pub fn triangulate_face(&self, face: FaceId) -> Result<FaceTriangulation, TopologyError> {
-        let mut vertices = self.face_polygon(face)?;
-        if vertices.len() < 3 {
+        let boundaries = self.face_boundary_loops(face)?;
+        if boundaries.holes.is_empty() {
+            return triangulate_simple_polygon(face, boundaries.outer);
+        }
+
+        let mut outer = boundaries.outer;
+        if signed_area(&outer) < 0.0 {
+            outer.reverse();
+        }
+        let mut vertices = outer;
+        let mut hole_indices = Vec::<u32>::with_capacity(boundaries.holes.len());
+        for mut hole in boundaries.holes {
+            if signed_area(&hole) > 0.0 {
+                hole.reverse();
+            }
+            hole_indices
+                .push(u32::try_from(vertices.len()).map_err(|_| TopologyError::TooManyVertices)?);
+            vertices.extend(hole);
+        }
+
+        let mut flat_indices = Vec::<u32>::new();
+        let mut earcut = Earcut::<f32>::new();
+        earcut.earcut::<u32>(
+            vertices.iter().map(|point| [point.x, point.y]),
+            &hole_indices,
+            &mut flat_indices,
+        );
+        if flat_indices.len() < 3 || flat_indices.len() % 3 != 0 {
             return Err(TopologyError::TriangulationFailed(face));
         }
-        if signed_area(&vertices) < 0.0 {
-            vertices.reverse();
-        }
-
-        let mut remaining: Vec<usize> = (0..vertices.len()).collect();
-        let mut triangles = Vec::with_capacity(vertices.len().saturating_sub(2));
-        let max_iterations = vertices.len() * vertices.len();
-        let mut iterations = 0;
-
-        while remaining.len() > 3 {
-            let mut clipped = false;
-            for cursor in 0..remaining.len() {
-                let previous = remaining[(cursor + remaining.len() - 1) % remaining.len()];
-                let current = remaining[cursor];
-                let next = remaining[(cursor + 1) % remaining.len()];
-                let a = vertices[previous];
-                let b = vertices[current];
-                let c = vertices[next];
-                if orientation(a, b, c) <= orientation_tolerance(a, b, c) {
-                    continue;
-                }
-
-                let contains_other = remaining.iter().copied().any(|candidate| {
-                    candidate != previous
-                        && candidate != current
-                        && candidate != next
-                        && point_in_or_on_triangle(vertices[candidate], a, b, c)
-                });
-                if contains_other {
-                    continue;
-                }
-
-                triangles.push([
-                    u32::try_from(previous).map_err(|_| TopologyError::TooManyVertices)?,
-                    u32::try_from(current).map_err(|_| TopologyError::TooManyVertices)?,
-                    u32::try_from(next).map_err(|_| TopologyError::TooManyVertices)?,
-                ]);
-                remaining.remove(cursor);
-                clipped = true;
-                break;
-            }
-
-            iterations += 1;
-            if !clipped || iterations > max_iterations {
-                return Err(TopologyError::TriangulationFailed(face));
-            }
-        }
-
-        triangles.push([
-            u32::try_from(remaining[0]).map_err(|_| TopologyError::TooManyVertices)?,
-            u32::try_from(remaining[1]).map_err(|_| TopologyError::TooManyVertices)?,
-            u32::try_from(remaining[2]).map_err(|_| TopologyError::TooManyVertices)?,
-        ]);
-
+        let triangles = flat_indices
+            .chunks_exact(3)
+            .map(|triangle| [triangle[0], triangle[1], triangle[2]])
+            .collect();
         Ok(FaceTriangulation {
             vertices,
             triangles,
         })
+    }
+
+    /// Inserts a simple closed loop fully inside one face. The original face gains
+    /// an inner boundary and the enclosed material becomes a new face. Existing holes
+    /// enclosed by the new loop move with the detached inner face.
+    pub fn insert_closed_loop(
+        &mut self,
+        face: FaceId,
+        points: &[Point2],
+    ) -> Result<FaceId, TopologyError> {
+        let mut candidate = self.clone();
+        let new_face = candidate.insert_closed_loop_in_place(face, points)?;
+        *self = candidate;
+        Ok(new_face)
+    }
+
+    fn insert_closed_loop_in_place(
+        &mut self,
+        face: FaceId,
+        points: &[Point2],
+    ) -> Result<FaceId, TopologyError> {
+        self.face(face)?;
+        let loop_points = normalize_closed_loop(points)?;
+        let boundaries = self.face_boundary_loops(face)?;
+
+        for point in &loop_points {
+            if !self.face_contains_point_strict(face, *point)? {
+                return Err(TopologyError::PolylineLeavesFace);
+            }
+        }
+        for index in 0..loop_points.len() {
+            let start = loop_points[index];
+            let end = loop_points[(index + 1) % loop_points.len()];
+            let midpoint = interpolate(start, end, 0.5);
+            if !self.face_contains_point_strict(face, midpoint)? {
+                return Err(TopologyError::PolylineLeavesFace);
+            }
+            for boundary in std::iter::once(&boundaries.outer).chain(boundaries.holes.iter()) {
+                for boundary_index in 0..boundary.len() {
+                    if segments_intersect(
+                        start,
+                        end,
+                        boundary[boundary_index],
+                        boundary[(boundary_index + 1) % boundary.len()],
+                    ) {
+                        return Err(TopologyError::PolylineLeavesFace);
+                    }
+                }
+            }
+        }
+
+        let existing_holes = self.face(face)?.holes.clone();
+        let mut remaining_holes = Vec::new();
+        let mut transferred_holes = Vec::new();
+        for hole in existing_holes {
+            let sample = self.vertex(self.edge(hole).origin).point;
+            if point_in_polygon(sample, &loop_points) {
+                transferred_holes.push(hole);
+            } else {
+                remaining_holes.push(hole);
+            }
+        }
+
+        let new_face =
+            FaceId(u32::try_from(self.faces.len()).map_err(|_| TopologyError::TooManyVertices)?);
+        let edge_base = self.half_edges.len();
+        let vertex_base = self.vertices.len();
+        let count = loop_points.len();
+        let mut island_edges = Vec::with_capacity(count);
+        let mut hole_edges = Vec::with_capacity(count);
+        for index in 0..count {
+            island_edges.push(HalfEdgeId(
+                u32::try_from(edge_base + index * 2).map_err(|_| TopologyError::TooManyVertices)?,
+            ));
+            hole_edges.push(HalfEdgeId(
+                u32::try_from(edge_base + index * 2 + 1)
+                    .map_err(|_| TopologyError::TooManyVertices)?,
+            ));
+        }
+        let mut loop_vertices = Vec::with_capacity(count);
+        for (index, point) in loop_points.iter().copied().enumerate() {
+            let vertex = VertexId(
+                u32::try_from(vertex_base + index).map_err(|_| TopologyError::TooManyVertices)?,
+            );
+            self.vertices.push(TopologyVertex {
+                point,
+                outgoing: Some(island_edges[index]),
+            });
+            loop_vertices.push(vertex);
+        }
+
+        for index in 0..count {
+            self.half_edges.push(HalfEdge {
+                origin: loop_vertices[index],
+                twin: Some(hole_edges[index]),
+                next: island_edges[(index + 1) % count],
+                prev: island_edges[(index + count - 1) % count],
+                face: new_face,
+            });
+            self.half_edges.push(HalfEdge {
+                origin: loop_vertices[(index + 1) % count],
+                twin: Some(island_edges[index]),
+                next: hole_edges[(index + count - 1) % count],
+                prev: hole_edges[(index + 1) % count],
+                face,
+            });
+        }
+
+        self.face_mut(face).holes = remaining_holes;
+        self.face_mut(face).holes.push(hole_edges[0]);
+        self.faces.push(Face {
+            outer: island_edges[0],
+            holes: transferred_holes.clone(),
+        });
+        for hole in transferred_holes {
+            self.assign_face_cycle(hole, new_face)?;
+        }
+        self.validate()?;
+        Ok(new_face)
     }
 
     pub fn split_face_with_segment(
@@ -304,10 +415,53 @@ impl PlanarTopology {
             }
         }
 
+        let mut seen = vec![false; self.half_edges.len()];
         for face_index in 0..self.faces.len() {
             let face = FaceId(face_index as u32);
-            let edges = self.face_half_edges(face)?;
-            if edges.len() < 3 || edges.iter().any(|edge| self.edge(*edge).face != face) {
+            let boundaries = self.face_boundary_half_edges(face)?;
+            if boundaries.is_empty() {
+                return Err(TopologyError::InvalidTopology);
+            }
+            for cycle in &boundaries {
+                if cycle.len() < 3 || cycle.iter().any(|edge| self.edge(*edge).face != face) {
+                    return Err(TopologyError::InvalidTopology);
+                }
+                for edge in cycle {
+                    if seen[edge.0 as usize] {
+                        return Err(TopologyError::InvalidTopology);
+                    }
+                    seen[edge.0 as usize] = true;
+                }
+            }
+
+            let loops = self.face_boundary_loops(face)?;
+            if !valid_face_loop(&loops.outer) {
+                return Err(TopologyError::InvalidTopology);
+            }
+            for hole in &loops.holes {
+                if !valid_face_loop(hole)
+                    || point_on_polygon_boundary(hole[0], &loops.outer)
+                    || !point_in_polygon(hole[0], &loops.outer)
+                    || polygons_intersect(hole, &loops.outer)
+                {
+                    return Err(TopologyError::InvalidTopology);
+                }
+            }
+            for first in 0..loops.holes.len() {
+                for second in (first + 1)..loops.holes.len() {
+                    let a = &loops.holes[first];
+                    let b = &loops.holes[second];
+                    if polygons_intersect(a, b)
+                        || point_in_polygon(a[0], b)
+                        || point_in_polygon(b[0], a)
+                    {
+                        return Err(TopologyError::InvalidTopology);
+                    }
+                }
+            }
+        }
+        for (edge_index, edge) in self.half_edges.iter().enumerate() {
+            if !seen[edge_index] || edge.face.0 as usize >= self.faces.len() {
                 return Err(TopologyError::InvalidTopology);
             }
         }
@@ -327,6 +481,7 @@ impl PlanarTopology {
             return Err(TopologyError::DegenerateSegment);
         }
         self.face(face)?;
+        let existing_holes = self.face(face)?.holes.clone();
 
         let start_vertex = self.locate_or_insert_boundary_vertex(face, start)?;
         let end_vertex = self.locate_or_insert_boundary_vertex(face, end)?;
@@ -387,11 +542,14 @@ impl PlanarTopology {
             (end_out, start_out)
         };
         self.faces.push(Face {
-            boundary: new_boundary,
+            outer: new_boundary,
+            holes: Vec::new(),
         });
-        self.face_mut(face).boundary = old_boundary;
+        self.face_mut(face).outer = old_boundary;
+        self.face_mut(face).holes.clear();
         self.assign_face_cycle(old_boundary, face)?;
         self.assign_face_cycle(new_boundary, new_face)?;
+        self.redistribute_holes_after_outer_split(face, new_face, existing_holes)?;
         self.validate()?;
         Ok(new_face)
     }
@@ -404,45 +562,47 @@ impl PlanarTopology {
         start: Point2,
         end: Point2,
     ) -> Result<(), TopologyError> {
-        let polygon = self.face_polygon(face)?;
         let midpoint = interpolate(start, end, 0.5);
-        if point_on_polygon_boundary(midpoint, &polygon) || !point_in_polygon(midpoint, &polygon) {
+        if !self.face_contains_point_strict(face, midpoint)? {
             return Err(TopologyError::SegmentLeavesFace);
         }
 
-        for edge_id in self.face_half_edges(face)? {
-            let edge = self.edge(edge_id);
-            let edge_start_vertex = edge.origin;
-            let edge_end_vertex = self.edge(edge.next).origin;
-            let edge_start = self.vertex(edge_start_vertex).point;
-            let edge_end = self.vertex(edge_end_vertex).point;
-            let incident = edge_start_vertex == start_vertex
-                || edge_end_vertex == start_vertex
-                || edge_start_vertex == end_vertex
-                || edge_end_vertex == end_vertex;
-            if incident {
-                let (shared, other, chord_other) = if edge_start_vertex == start_vertex {
-                    (start, edge_end, end)
-                } else if edge_end_vertex == start_vertex {
-                    (start, edge_start, end)
-                } else if edge_start_vertex == end_vertex {
-                    (end, edge_end, start)
-                } else {
-                    (end, edge_start, start)
-                };
-                let edge_direction = Point2::new(other.x - shared.x, other.y - shared.y);
-                let chord_direction =
-                    Point2::new(chord_other.x - shared.x, chord_other.y - shared.y);
-                let overlaps_chord = is_collinear(start, end, other)
-                    && edge_direction.x * chord_direction.x + edge_direction.y * chord_direction.y
-                        > squared_length_tolerance(shared, chord_other);
-                if overlaps_chord {
+        for boundary in self.face_boundary_half_edges(face)? {
+            for edge_id in boundary {
+                let edge = self.edge(edge_id);
+                let edge_start_vertex = edge.origin;
+                let edge_end_vertex = self.edge(edge.next).origin;
+                let edge_start = self.vertex(edge_start_vertex).point;
+                let edge_end = self.vertex(edge_end_vertex).point;
+                let incident = edge_start_vertex == start_vertex
+                    || edge_end_vertex == start_vertex
+                    || edge_start_vertex == end_vertex
+                    || edge_end_vertex == end_vertex;
+                if incident {
+                    let (shared, other, chord_other) = if edge_start_vertex == start_vertex {
+                        (start, edge_end, end)
+                    } else if edge_end_vertex == start_vertex {
+                        (start, edge_start, end)
+                    } else if edge_start_vertex == end_vertex {
+                        (end, edge_end, start)
+                    } else {
+                        (end, edge_start, start)
+                    };
+                    let edge_direction = Point2::new(other.x - shared.x, other.y - shared.y);
+                    let chord_direction =
+                        Point2::new(chord_other.x - shared.x, chord_other.y - shared.y);
+                    let overlaps_chord = is_collinear(start, end, other)
+                        && edge_direction.x * chord_direction.x
+                            + edge_direction.y * chord_direction.y
+                            > squared_length_tolerance(shared, chord_other);
+                    if overlaps_chord {
+                        return Err(TopologyError::SegmentLeavesFace);
+                    }
+                    continue;
+                }
+                if segments_intersect(start, end, edge_start, edge_end) {
                     return Err(TopologyError::SegmentLeavesFace);
                 }
-                continue;
-            }
-            if segments_intersect(start, end, edge_start, edge_end) {
-                return Err(TopologyError::SegmentLeavesFace);
             }
         }
         Ok(())
@@ -579,7 +739,27 @@ impl PlanarTopology {
     }
 
     fn face_half_edges(&self, face: FaceId) -> Result<Vec<HalfEdgeId>, TopologyError> {
-        let boundary = self.face(face)?.boundary;
+        self.cycle_half_edges(self.face(face)?.outer, face)
+    }
+
+    fn face_boundary_half_edges(
+        &self,
+        face: FaceId,
+    ) -> Result<Vec<Vec<HalfEdgeId>>, TopologyError> {
+        let face_data = self.face(face)?;
+        let mut boundaries = Vec::with_capacity(face_data.holes.len() + 1);
+        boundaries.push(self.cycle_half_edges(face_data.outer, face)?);
+        for hole in &face_data.holes {
+            boundaries.push(self.cycle_half_edges(*hole, face)?);
+        }
+        Ok(boundaries)
+    }
+
+    fn cycle_half_edges(
+        &self,
+        boundary: HalfEdgeId,
+        face: FaceId,
+    ) -> Result<Vec<HalfEdgeId>, TopologyError> {
         let mut edges = Vec::new();
         let mut current = boundary;
         for _ in 0..=self.half_edges.len() {
@@ -593,6 +773,65 @@ impl PlanarTopology {
             }
         }
         Err(TopologyError::InvalidTopology)
+    }
+
+    fn cycle_polygon(
+        &self,
+        boundary: HalfEdgeId,
+        face: FaceId,
+    ) -> Result<Vec<Point2>, TopologyError> {
+        Ok(self
+            .cycle_half_edges(boundary, face)?
+            .into_iter()
+            .map(|edge| self.vertex(self.edge(edge).origin).point)
+            .collect())
+    }
+
+    fn face_contains_point_strict(
+        &self,
+        face: FaceId,
+        point: Point2,
+    ) -> Result<bool, TopologyError> {
+        let boundaries = self.face_boundary_loops(face)?;
+        if point_on_polygon_boundary(point, &boundaries.outer)
+            || !point_in_polygon(point, &boundaries.outer)
+        {
+            return Ok(false);
+        }
+        for hole in boundaries.holes {
+            if point_on_polygon_boundary(point, &hole) || point_in_polygon(point, &hole) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    fn redistribute_holes_after_outer_split(
+        &mut self,
+        face: FaceId,
+        new_face: FaceId,
+        existing_holes: Vec<HalfEdgeId>,
+    ) -> Result<(), TopologyError> {
+        let old_outer = self.face_polygon(face)?;
+        let new_outer = self.face_polygon(new_face)?;
+        let mut old_holes = Vec::new();
+        let mut new_holes = Vec::new();
+        for hole in existing_holes {
+            let sample = self.vertex(self.edge(hole).origin).point;
+            let in_old = point_in_polygon(sample, &old_outer);
+            let in_new = point_in_polygon(sample, &new_outer);
+            match (in_old, in_new) {
+                (true, false) => old_holes.push(hole),
+                (false, true) => {
+                    self.assign_face_cycle(hole, new_face)?;
+                    new_holes.push(hole);
+                }
+                _ => return Err(TopologyError::InvalidTopology),
+            }
+        }
+        self.face_mut(face).holes = old_holes;
+        self.face_mut(new_face).holes = new_holes;
+        Ok(())
     }
 
     fn vertex(&self, id: VertexId) -> &TopologyVertex {
@@ -656,6 +895,7 @@ impl PlanarTopology {
             return Err(TopologyError::PolylineSelfIntersecting);
         }
         self.face(face)?;
+        let existing_holes = self.face(face)?.holes.clone();
 
         let polygon = self.face_polygon(face)?;
         let start = points[0];
@@ -665,9 +905,28 @@ impl PlanarTopology {
             return Err(TopologyError::PointOffBoundary);
         }
         if points[1..points.len() - 1].iter().any(|point| {
-            point_on_polygon_boundary(*point, &polygon) || !point_in_polygon(*point, &polygon)
+            !self
+                .face_contains_point_strict(face, *point)
+                .unwrap_or(false)
         }) {
             return Err(TopologyError::PolylineLeavesFace);
+        }
+        for segment in points.windows(2) {
+            if !self.face_contains_point_strict(face, interpolate(segment[0], segment[1], 0.5))? {
+                return Err(TopologyError::PolylineLeavesFace);
+            }
+            for hole in &self.face_boundary_loops(face)?.holes {
+                for index in 0..hole.len() {
+                    if segments_intersect(
+                        segment[0],
+                        segment[1],
+                        hole[index],
+                        hole[(index + 1) % hole.len()],
+                    ) {
+                        return Err(TopologyError::PolylineLeavesFace);
+                    }
+                }
+            }
         }
 
         let start_vertex = self.locate_or_insert_boundary_vertex(face, start)?;
@@ -730,7 +989,10 @@ impl PlanarTopology {
         }
         path_vertices.push(end_vertex);
 
-        self.faces.push(Face { boundary: end_out });
+        self.faces.push(Face {
+            outer: end_out,
+            holes: Vec::new(),
+        });
         for index in 0..segment_count {
             self.half_edges.push(HalfEdge {
                 origin: path_vertices[index],
@@ -768,9 +1030,11 @@ impl PlanarTopology {
         self.edge_mut(end_out).prev = *forward.last().expect("non-empty path");
         self.edge_mut(end_prev).next = *reverse.last().expect("non-empty path");
         self.edge_mut(start_out).prev = reverse[0];
-        self.face_mut(face).boundary = start_out;
+        self.face_mut(face).outer = start_out;
+        self.face_mut(face).holes.clear();
         self.assign_face_cycle(start_out, face)?;
         self.assign_face_cycle(end_out, new_face)?;
+        self.redistribute_holes_after_outer_split(face, new_face, existing_holes)?;
         self.validate()?;
         Ok(new_face)
     }
@@ -886,11 +1150,7 @@ impl PlanarTopology {
         let mut found = None;
         for face_index in 0..self.faces.len() {
             let face = FaceId(face_index as u32);
-            let polygon = self.face_polygon(face)?;
-            if point_on_polygon_boundary(point, &polygon) {
-                continue;
-            }
-            if point_in_polygon(point, &polygon) {
+            if self.face_contains_point_strict(face, point)? {
                 if found.is_some() {
                     return Err(TopologyError::InvalidTopology);
                 }
@@ -1046,6 +1306,122 @@ fn polyline_is_simple(points: &[Point2]) -> bool {
         }
     }
     true
+}
+
+fn triangulate_simple_polygon(
+    face: FaceId,
+    mut vertices: Vec<Point2>,
+) -> Result<FaceTriangulation, TopologyError> {
+    if vertices.len() < 3 {
+        return Err(TopologyError::TriangulationFailed(face));
+    }
+    if signed_area(&vertices) < 0.0 {
+        vertices.reverse();
+    }
+
+    let mut remaining: Vec<usize> = (0..vertices.len()).collect();
+    let mut triangles = Vec::with_capacity(vertices.len().saturating_sub(2));
+    let max_iterations = vertices.len() * vertices.len();
+    let mut iterations = 0;
+
+    while remaining.len() > 3 {
+        let mut clipped = false;
+        for cursor in 0..remaining.len() {
+            let previous = remaining[(cursor + remaining.len() - 1) % remaining.len()];
+            let current = remaining[cursor];
+            let next = remaining[(cursor + 1) % remaining.len()];
+            let a = vertices[previous];
+            let b = vertices[current];
+            let c = vertices[next];
+            if orientation(a, b, c) <= orientation_tolerance(a, b, c) {
+                continue;
+            }
+
+            let contains_other = remaining.iter().copied().any(|candidate| {
+                candidate != previous
+                    && candidate != current
+                    && candidate != next
+                    && point_in_or_on_triangle(vertices[candidate], a, b, c)
+            });
+            if contains_other {
+                continue;
+            }
+
+            triangles.push([
+                u32::try_from(previous).map_err(|_| TopologyError::TooManyVertices)?,
+                u32::try_from(current).map_err(|_| TopologyError::TooManyVertices)?,
+                u32::try_from(next).map_err(|_| TopologyError::TooManyVertices)?,
+            ]);
+            remaining.remove(cursor);
+            clipped = true;
+            break;
+        }
+
+        iterations += 1;
+        if !clipped || iterations > max_iterations {
+            return Err(TopologyError::TriangulationFailed(face));
+        }
+    }
+
+    triangles.push([
+        u32::try_from(remaining[0]).map_err(|_| TopologyError::TooManyVertices)?,
+        u32::try_from(remaining[1]).map_err(|_| TopologyError::TooManyVertices)?,
+        u32::try_from(remaining[2]).map_err(|_| TopologyError::TooManyVertices)?,
+    ]);
+    Ok(FaceTriangulation {
+        vertices,
+        triangles,
+    })
+}
+
+fn normalize_closed_loop(points: &[Point2]) -> Result<Vec<Point2>, TopologyError> {
+    let mut loop_points = points.to_vec();
+    if loop_points.len() > 1
+        && approximately_equal(loop_points[0], *loop_points.last().expect("non-empty path"))
+    {
+        loop_points.pop();
+    }
+    if loop_points.len() < 3 {
+        return Err(TopologyError::TooFewVertices);
+    }
+    if loop_points.iter().any(|point| !point.is_finite()) {
+        return Err(TopologyError::NonFinitePoint);
+    }
+    if (0..loop_points.len()).any(|index| {
+        approximately_equal(
+            loop_points[index],
+            loop_points[(index + 1) % loop_points.len()],
+        )
+    }) {
+        return Err(TopologyError::DuplicateAdjacentVertex);
+    }
+    if !is_simple_polygon(&loop_points) {
+        return Err(TopologyError::PolylineSelfIntersecting);
+    }
+    let area = signed_area(&loop_points);
+    if area.abs() <= polygon_area_tolerance(&loop_points) {
+        return Err(TopologyError::DegeneratePolygon);
+    }
+    if area < 0.0 {
+        loop_points.reverse();
+    }
+    Ok(loop_points)
+}
+
+fn polygons_intersect(a: &[Point2], b: &[Point2]) -> bool {
+    for first in 0..a.len() {
+        for second in 0..b.len() {
+            if segments_intersect(
+                a[first],
+                a[(first + 1) % a.len()],
+                b[second],
+                b[(second + 1) % b.len()],
+            ) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn signed_area(points: &[Point2]) -> f32 {
@@ -1266,6 +1642,176 @@ mod tests {
             .split_face_with_segment(FaceId(0), Point2::new(1.0, 1.0), Point2::new(1.0, 0.0))
             .unwrap();
         assert_eq!(topology.face_count(), 2);
+        topology.validate().unwrap();
+    }
+
+    fn triangle_area(a: Point2, b: Point2, c: Point2) -> f32 {
+        orientation(a, b, c).abs() * 0.5
+    }
+
+    #[test]
+    fn closed_loop_creates_hole_and_inner_face() {
+        let mut topology = PlanarTopology::from_polygon(vec![
+            Point2::new(-2.0, -2.0),
+            Point2::new(2.0, -2.0),
+            Point2::new(2.0, 2.0),
+            Point2::new(-2.0, 2.0),
+        ])
+        .unwrap();
+        let inner = topology
+            .insert_closed_loop(
+                FaceId(0),
+                &[
+                    Point2::new(-0.5, -0.5),
+                    Point2::new(0.5, -0.5),
+                    Point2::new(0.5, 0.5),
+                    Point2::new(-0.5, 0.5),
+                ],
+            )
+            .unwrap();
+
+        assert_eq!(inner, FaceId(1));
+        assert_eq!(
+            topology.face_boundary_loops(FaceId(0)).unwrap().holes.len(),
+            1
+        );
+        assert!(
+            topology
+                .face_boundary_loops(inner)
+                .unwrap()
+                .holes
+                .is_empty()
+        );
+        topology.validate().unwrap();
+
+        let triangulation = topology.triangulate_face(FaceId(0)).unwrap();
+        let area: f32 = triangulation
+            .triangles
+            .iter()
+            .map(|triangle| {
+                triangle_area(
+                    triangulation.vertices[triangle[0] as usize],
+                    triangulation.vertices[triangle[1] as usize],
+                    triangulation.vertices[triangle[2] as usize],
+                )
+            })
+            .sum();
+        assert!((area - 15.0).abs() < 1.0e-4);
+    }
+
+    #[test]
+    fn face_can_own_multiple_disjoint_holes() {
+        let mut topology = PlanarTopology::from_polygon(vec![
+            Point2::new(-3.0, -2.0),
+            Point2::new(3.0, -2.0),
+            Point2::new(3.0, 2.0),
+            Point2::new(-3.0, 2.0),
+        ])
+        .unwrap();
+        topology
+            .insert_closed_loop(
+                FaceId(0),
+                &[
+                    Point2::new(-1.75, -0.5),
+                    Point2::new(-0.75, -0.5),
+                    Point2::new(-0.75, 0.5),
+                    Point2::new(-1.75, 0.5),
+                ],
+            )
+            .unwrap();
+        topology
+            .insert_closed_loop(
+                FaceId(0),
+                &[
+                    Point2::new(0.75, -0.5),
+                    Point2::new(1.75, -0.5),
+                    Point2::new(1.75, 0.5),
+                    Point2::new(0.75, 0.5),
+                ],
+            )
+            .unwrap();
+
+        assert_eq!(
+            topology.face_boundary_loops(FaceId(0)).unwrap().holes.len(),
+            2
+        );
+        assert!(topology.triangulate_face(FaceId(0)).is_ok());
+        topology.validate().unwrap();
+    }
+
+    #[test]
+    fn enclosing_cut_transfers_existing_hole_to_inner_face() {
+        let mut topology = PlanarTopology::from_polygon(vec![
+            Point2::new(-3.0, -3.0),
+            Point2::new(3.0, -3.0),
+            Point2::new(3.0, 3.0),
+            Point2::new(-3.0, 3.0),
+        ])
+        .unwrap();
+        topology
+            .insert_closed_loop(
+                FaceId(0),
+                &[
+                    Point2::new(-0.5, -0.5),
+                    Point2::new(0.5, -0.5),
+                    Point2::new(0.5, 0.5),
+                    Point2::new(-0.5, 0.5),
+                ],
+            )
+            .unwrap();
+        let annulus = topology
+            .insert_closed_loop(
+                FaceId(0),
+                &[
+                    Point2::new(-1.5, -1.5),
+                    Point2::new(1.5, -1.5),
+                    Point2::new(1.5, 1.5),
+                    Point2::new(-1.5, 1.5),
+                ],
+            )
+            .unwrap();
+
+        assert_eq!(
+            topology.face_boundary_loops(FaceId(0)).unwrap().holes.len(),
+            1
+        );
+        assert_eq!(
+            topology.face_boundary_loops(annulus).unwrap().holes.len(),
+            1
+        );
+        assert!(topology.triangulate_face(annulus).is_ok());
+        topology.validate().unwrap();
+    }
+
+    #[test]
+    fn outer_chord_split_preserves_existing_hole() {
+        let mut topology = PlanarTopology::from_polygon(vec![
+            Point2::new(-2.0, -2.0),
+            Point2::new(2.0, -2.0),
+            Point2::new(2.0, 2.0),
+            Point2::new(-2.0, 2.0),
+        ])
+        .unwrap();
+        topology
+            .insert_closed_loop(
+                FaceId(0),
+                &[
+                    Point2::new(-1.5, -0.4),
+                    Point2::new(-0.7, -0.4),
+                    Point2::new(-0.7, 0.4),
+                    Point2::new(-1.5, 0.4),
+                ],
+            )
+            .unwrap();
+        let child = topology
+            .split_face_with_segment(FaceId(0), Point2::new(0.5, -2.0), Point2::new(0.5, 2.0))
+            .unwrap();
+
+        let hole_counts = [
+            topology.face_boundary_loops(FaceId(0)).unwrap().holes.len(),
+            topology.face_boundary_loops(child).unwrap().holes.len(),
+        ];
+        assert_eq!(hole_counts.iter().sum::<usize>(), 1);
         topology.validate().unwrap();
     }
 

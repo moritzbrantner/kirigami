@@ -19,6 +19,8 @@
 - Deterministic ear-clipping triangulation for simple concave faces; rendering no longer assumes convex fan triangulation.
 - Transactional single-face polyline splitting for bent cuts and segmented straight creases.
 - Deterministic multi-face path tracing with inserted boundary intersections; one logical operation spans all generated seam segments.
+- Closed cuts that create detached inner panels plus authoritative outer/inner face boundary loops.
+- Multiple disjoint or nested hole loops with deterministic hole-aware rendering triangulation.
 - Cuts that split connected components.
 - Creases that preserve connectivity.
 - Deterministic rigid rotation around a crease axis.
@@ -27,14 +29,15 @@
 
 ## Next vertical slices
 
-1. Add closed cut paths / holes and multiple boundary loops; then upgrade triangulation to constrained Delaunay when mesh quality or physical simulation requires it while keeping boundary constraints authoritative.
+1. Extend open-path arrangement to boundary bridges involving inner loops when a cut should open an annulus instead of splitting it into two faces.
 2. Integrate the collision foundation for BVH-backed paper self-intersection queries; keep collision detection advisory to `kirigami-core` validity until the boundary is proven.
-3. Add multi-crease fold state and constraint propagation so genuinely bent creases have an authoritative solver. Use the physics engine only for material/mechanical behavior, never as the authority for crease meaning.
-4. Add first-party 3D rendering through the shared `3d-lab` renderer seam while retaining the lightweight Canvas renderer as a deterministic fallback/acceptance surface.
-5. Add layer ordering and flat-foldability validation.
-6. Add SVG/FOLD import/export and deterministic pattern fixtures.
-7. Add inverse-design/optimization experiments only after forward topology and validity are well tested.
+3. Upgrade rendering/physics triangulation to constrained Delaunay when mesh quality requires it; the outer/inner loops remain authoritative regardless of triangulator.
+4. Add multi-crease fold state and constraint propagation so genuinely bent creases have an authoritative solver. Use the physics engine only for material/mechanical behavior, never as the authority for crease meaning.
+5. Add first-party 3D rendering through the shared `3d-lab` renderer seam while retaining the lightweight Canvas renderer as a deterministic fallback/acceptance surface.
+6. Add layer ordering and flat-foldability validation.
+7. Add SVG/FOLD import/export and deterministic pattern fixtures.
+8. Add inverse-design/optimization experiments only after forward topology and validity are well tested.
 
 ## Algorithm priorities
 
-The immediate algorithm work is closed-path/hole arrangement, constrained triangulation with multiple boundary loops, BVH/self-intersection, and then multi-crease constraint solving plus layer ordering. Multi-face open-path intersection insertion is now part of the deterministic topology foundation.
+Closed-path/hole arrangement and multiple boundary loops are now part of the deterministic topology foundation. Hole-aware rendering uses Earcut as a replaceable consumer of authoritative loops; the next algorithm work is boundary-bridge arrangement, BVH/self-intersection, then constrained triangulation and multi-crease constraint solving.

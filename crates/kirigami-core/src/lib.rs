@@ -6,7 +6,8 @@
 mod topology;
 
 pub use topology::{
-    FaceId, FaceTriangulation, HalfEdgeId, PlanarTopology, TopologyError, VertexId,
+    FaceBoundaryLoops, FaceId, FaceTriangulation, HalfEdgeId, PlanarTopology, TopologyError,
+    VertexId,
 };
 
 use serde::Serialize;
@@ -275,6 +276,57 @@ impl PaperModel {
         self.split_panel_with_path(panel_id, path, kind)
     }
 
+    /// Cuts a simple closed path fully inside one panel. The enclosed material becomes
+    /// a detached panel while the original panel keeps the new inner boundary.
+    pub fn cut_closed_path(
+        &mut self,
+        panel_id: PanelId,
+        path: &[Point2],
+    ) -> Result<OperationId, ModelError> {
+        let canonical_path = canonical_closed_path(path)?;
+        let mut candidate = self.clone();
+        let panel_index = candidate
+            .panels
+            .iter()
+            .position(|panel| panel.id == panel_id)
+            .ok_or(ModelError::UnknownPanel(panel_id))?;
+        let original_id = candidate.panels[panel_index].id;
+        let original_face = candidate.panels[panel_index].face;
+        let new_face = candidate
+            .topology
+            .insert_closed_loop(original_face, &canonical_path)
+            .map_err(map_split_error)?;
+        let new_id = PanelId(candidate.next_panel_id);
+        let operation_id = OperationId(candidate.next_operation_id);
+
+        candidate.reattach_seams_inside_closed_cut(original_id, new_id, &canonical_path);
+        for segment in canonical_path.windows(2) {
+            candidate.seams.push(Seam {
+                id: SeamId(candidate.next_seam_id),
+                operation: operation_id,
+                kind: OperationKind::Cut,
+                start: segment[0],
+                end: segment[1],
+                panel_a: original_id,
+                panel_b: new_id,
+            });
+            candidate.next_seam_id += 1;
+        }
+        candidate.panels.push(Panel {
+            id: new_id,
+            face: new_face,
+        });
+        candidate.operations.push(Operation {
+            id: operation_id,
+            kind: OperationKind::Cut,
+            path: canonical_path,
+        });
+        candidate.next_panel_id += 1;
+        candidate.next_operation_id += 1;
+        *self = candidate;
+        Ok(operation_id)
+    }
+
     fn split_panel_with_path(
         &mut self,
         panel_id: PanelId,
@@ -359,8 +411,8 @@ impl PaperModel {
                 .split_face_with_polyline(original_face, path)
                 .map_err(map_split_error)?
         };
-        let a_polygon = self.topology.face_polygon(original_face)?;
-        let b_polygon = self.topology.face_polygon(new_face)?;
+        let a_boundaries = self.topology.face_boundary_loops(original_face)?;
+        let b_boundaries = self.topology.face_boundary_loops(new_face)?;
 
         let original_id = self.panels[panel_index].id;
         let new_id = PanelId(self.next_panel_id);
@@ -369,8 +421,8 @@ impl PaperModel {
             new_id,
             start,
             end,
-            &a_polygon,
-            &b_polygon,
+            &a_boundaries,
+            &b_boundaries,
         )?;
 
         let mut new_seams = Vec::with_capacity(path.len() - 1);
@@ -535,14 +587,38 @@ impl PaperModel {
         visited
     }
 
+    fn reattach_seams_inside_closed_cut(
+        &mut self,
+        original_panel: PanelId,
+        new_panel: PanelId,
+        closed_path: &[Point2],
+    ) {
+        let polygon = &closed_path[..closed_path.len() - 1];
+        for seam in &mut self.seams {
+            if seam.panel_a != original_panel && seam.panel_b != original_panel {
+                continue;
+            }
+            let midpoint = interpolate(seam.start, seam.end, 0.5);
+            if !point_in_polygon(midpoint, polygon) {
+                continue;
+            }
+            if seam.panel_a == original_panel {
+                seam.panel_a = new_panel;
+            }
+            if seam.panel_b == original_panel {
+                seam.panel_b = new_panel;
+            }
+        }
+    }
+
     fn reattached_seams_after_split(
         &self,
         original_panel: PanelId,
         new_panel: PanelId,
         split_start: Point2,
         split_end: Point2,
-        a_polygon: &[Point2],
-        b_polygon: &[Point2],
+        a_boundaries: &FaceBoundaryLoops,
+        b_boundaries: &FaceBoundaryLoops,
     ) -> Result<(Vec<Seam>, u32), ModelError> {
         let mut rebuilt = Vec::with_capacity(self.seams.len() + 2);
         let mut next_seam_id = self.next_seam_id;
@@ -561,8 +637,8 @@ impl PaperModel {
                 split_end,
                 original_panel,
                 new_panel,
-                a_polygon,
-                b_polygon,
+                a_boundaries,
+                b_boundaries,
             )?;
             for (piece_index, (start, end, child_panel)) in pieces.into_iter().enumerate() {
                 let mut piece = seam.clone();
@@ -687,8 +763,8 @@ fn seam_pieces_after_split(
     split_end: Point2,
     original_panel: PanelId,
     new_panel: PanelId,
-    a_polygon: &[Point2],
-    b_polygon: &[Point2],
+    a_boundaries: &FaceBoundaryLoops,
+    b_boundaries: &FaceBoundaryLoops,
 ) -> Result<Vec<(Point2, Point2, PanelId)>, ModelError> {
     let mut parameters = vec![0.0, 1.0];
     for split_point in [split_start, split_end] {
@@ -713,8 +789,8 @@ fn seam_pieces_after_split(
             continue;
         }
         let midpoint = interpolate(start, end, 0.5);
-        let on_a = point_on_boundary(midpoint, a_polygon);
-        let on_b = point_on_boundary(midpoint, b_polygon);
+        let on_a = point_on_boundary_loops(midpoint, a_boundaries);
+        let on_b = point_on_boundary_loops(midpoint, b_boundaries);
         let panel = match (on_a, on_b) {
             (true, false) => original_panel,
             (false, true) => new_panel,
@@ -729,9 +805,57 @@ fn seam_pieces_after_split(
     Ok(pieces)
 }
 
+fn point_on_boundary_loops(point: Point2, boundaries: &FaceBoundaryLoops) -> bool {
+    point_on_boundary(point, &boundaries.outer)
+        || boundaries
+            .holes
+            .iter()
+            .any(|hole| point_on_boundary(point, hole))
+}
+
 fn point_on_boundary(point: Point2, polygon: &[Point2]) -> bool {
     (0..polygon.len())
         .any(|index| point_on_segment(point, polygon[index], polygon[(index + 1) % polygon.len()]))
+}
+
+fn point_in_polygon(point: Point2, polygon: &[Point2]) -> bool {
+    let mut inside = false;
+    let mut previous = polygon.len() - 1;
+    for current in 0..polygon.len() {
+        let a = polygon[current];
+        let b = polygon[previous];
+        let crosses = (a.y > point.y) != (b.y > point.y)
+            && point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x;
+        if crosses {
+            inside = !inside;
+        }
+        previous = current;
+    }
+    inside
+}
+
+fn canonical_closed_path(path: &[Point2]) -> Result<Vec<Point2>, ModelError> {
+    if path.len() < 3 || path.iter().any(|point| !point.is_finite()) {
+        return Err(ModelError::InvalidPath);
+    }
+    let mut canonical = path.to_vec();
+    if squared_distance(canonical[0], *canonical.last().expect("path is non-empty"))
+        <= EPSILON * EPSILON
+    {
+        canonical.pop();
+    }
+    if canonical.len() < 3 {
+        return Err(ModelError::InvalidPath);
+    }
+    for index in 0..canonical.len() {
+        if squared_distance(canonical[index], canonical[(index + 1) % canonical.len()])
+            <= EPSILON * EPSILON
+        {
+            return Err(ModelError::DegenerateSegment);
+        }
+    }
+    canonical.push(canonical[0]);
+    Ok(canonical)
 }
 
 fn point_on_segment(point: Point2, start: Point2, end: Point2) -> bool {
@@ -1061,6 +1185,177 @@ mod tests {
             Err(ModelError::SegmentDoesNotSplitPanel)
         );
         assert_eq!(model, before);
+    }
+
+    #[test]
+    fn closed_cut_creates_detached_panel_and_hole() {
+        let mut model = PaperModel::rectangle(4.0, 4.0).unwrap();
+        let cut = model
+            .cut_closed_path(
+                PanelId(0),
+                &[
+                    Point2::new(-0.5, -0.5),
+                    Point2::new(0.5, -0.5),
+                    Point2::new(0.5, 0.5),
+                    Point2::new(-0.5, 0.5),
+                ],
+            )
+            .unwrap();
+
+        assert_eq!(model.panels().len(), 2);
+        assert_eq!(model.component_count(), 2);
+        assert_eq!(
+            model.operations().last().unwrap().path.first(),
+            model.operations().last().unwrap().path.last()
+        );
+        assert_eq!(
+            model
+                .seams()
+                .iter()
+                .filter(|seam| seam.operation == cut)
+                .count(),
+            4
+        );
+        assert_eq!(
+            model
+                .topology()
+                .face_boundary_loops(FaceId(0))
+                .unwrap()
+                .holes
+                .len(),
+            1
+        );
+        let snapshot = model.render_snapshot(None).unwrap();
+        assert_eq!(snapshot.panel_count, 2);
+        assert_eq!(snapshot.component_count, 2);
+    }
+
+    #[test]
+    fn second_disjoint_closed_cut_adds_second_hole() {
+        let mut model = PaperModel::rectangle(6.0, 4.0).unwrap();
+        model
+            .cut_closed_path(
+                PanelId(0),
+                &[
+                    Point2::new(-2.0, -0.5),
+                    Point2::new(-1.0, -0.5),
+                    Point2::new(-1.0, 0.5),
+                    Point2::new(-2.0, 0.5),
+                ],
+            )
+            .unwrap();
+        model
+            .cut_closed_path(
+                PanelId(0),
+                &[
+                    Point2::new(1.0, -0.5),
+                    Point2::new(2.0, -0.5),
+                    Point2::new(2.0, 0.5),
+                    Point2::new(1.0, 0.5),
+                ],
+            )
+            .unwrap();
+
+        assert_eq!(model.panels().len(), 3);
+        assert_eq!(model.component_count(), 3);
+        assert_eq!(
+            model
+                .topology()
+                .face_boundary_loops(FaceId(0))
+                .unwrap()
+                .holes
+                .len(),
+            2
+        );
+        assert!(model.render_snapshot(None).is_ok());
+    }
+
+    #[test]
+    fn enclosing_closed_cut_moves_existing_cut_boundary_to_new_panel() {
+        let mut model = PaperModel::rectangle(6.0, 6.0).unwrap();
+        let inner_cut = model
+            .cut_closed_path(
+                PanelId(0),
+                &[
+                    Point2::new(-0.5, -0.5),
+                    Point2::new(0.5, -0.5),
+                    Point2::new(0.5, 0.5),
+                    Point2::new(-0.5, 0.5),
+                ],
+            )
+            .unwrap();
+        model
+            .cut_closed_path(
+                PanelId(0),
+                &[
+                    Point2::new(-1.5, -1.5),
+                    Point2::new(1.5, -1.5),
+                    Point2::new(1.5, 1.5),
+                    Point2::new(-1.5, 1.5),
+                ],
+            )
+            .unwrap();
+
+        let annulus_panel = PanelId(2);
+        assert!(
+            model
+                .seams()
+                .iter()
+                .filter(|seam| seam.operation == inner_cut)
+                .all(|seam| seam.panel_a == annulus_panel || seam.panel_b == annulus_panel)
+        );
+        assert_eq!(
+            model
+                .topology()
+                .face_boundary_loops(
+                    model
+                        .panels()
+                        .iter()
+                        .find(|panel| panel.id == annulus_panel)
+                        .unwrap()
+                        .face
+                )
+                .unwrap()
+                .holes
+                .len(),
+            1
+        );
+        model.topology().validate().unwrap();
+    }
+
+    #[test]
+    fn open_cut_after_closed_cut_preserves_hole_seam_provenance() {
+        let mut model = PaperModel::rectangle(6.0, 4.0).unwrap();
+        let closed = model
+            .cut_closed_path(
+                PanelId(0),
+                &[
+                    Point2::new(-2.0, -0.5),
+                    Point2::new(-1.0, -0.5),
+                    Point2::new(-1.0, 0.5),
+                    Point2::new(-2.0, 0.5),
+                ],
+            )
+            .unwrap();
+        model
+            .split_panel_with_segment(
+                PanelId(0),
+                Point2::new(0.5, -2.0),
+                Point2::new(0.5, 2.0),
+                OperationKind::Cut,
+            )
+            .unwrap();
+
+        assert_eq!(
+            model
+                .seams()
+                .iter()
+                .filter(|seam| seam.operation == closed)
+                .count(),
+            4
+        );
+        assert!(model.render_snapshot(None).is_ok());
+        model.topology().validate().unwrap();
     }
 
     #[test]
