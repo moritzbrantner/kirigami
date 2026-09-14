@@ -417,9 +417,11 @@ impl PaperModel {
         let mut visited = seeds.clone();
         let mut queue: VecDeque<PanelId> = seeds.iter().copied().collect();
         while let Some(current) = queue.pop_front() {
-            for seam in self.seams.iter().filter(|seam| {
-                seam.kind == OperationKind::Crease && seam.operation != excluded
-            }) {
+            for seam in self
+                .seams
+                .iter()
+                .filter(|seam| seam.kind == OperationKind::Crease && seam.operation != excluded)
+            {
                 let neighbor = adjacent_panel(seam, current);
                 match neighbor {
                     Some(neighbor) if visited.insert(neighbor) => {
@@ -534,12 +536,7 @@ struct ResolvedFold {
 
 impl ResolvedFold {
     fn transform(&self, point: Vec3) -> Vec3 {
-        rotate_around_axis(
-            point,
-            self.axis_start,
-            self.axis_end,
-            self.angle_radians,
-        )
+        rotate_around_axis(point, self.axis_start, self.axis_end, self.angle_radians)
     }
 }
 
@@ -804,8 +801,16 @@ mod tests {
             .collect();
         assert_eq!(crease_segments.len(), 2);
         assert_eq!(model.component_count(), 1);
-        assert!(crease_segments.iter().any(|seam| seam.panel_a == PanelId(0)));
-        assert!(crease_segments.iter().any(|seam| seam.panel_a == PanelId(2)));
+        assert!(
+            crease_segments
+                .iter()
+                .any(|seam| seam.panel_a == PanelId(0))
+        );
+        assert!(
+            crease_segments
+                .iter()
+                .any(|seam| seam.panel_a == PanelId(2))
+        );
     }
 
     #[test]
