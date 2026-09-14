@@ -37,6 +37,9 @@ pub enum OperationKind {
 pub struct PanelId(pub u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+pub struct OperationId(pub u32);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub struct SeamId(pub u32);
 
 #[derive(Debug, Clone, PartialEq)]
@@ -46,8 +49,17 @@ pub struct Panel {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct Operation {
+    pub id: OperationId,
+    pub kind: OperationKind,
+    pub start: Point2,
+    pub end: Point2,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Seam {
     pub id: SeamId,
+    pub operation: OperationId,
     pub kind: OperationKind,
     pub start: Point2,
     pub end: Point2,
@@ -59,19 +71,22 @@ pub struct Seam {
 pub struct PaperModel {
     vertices: Vec<Point2>,
     panels: Vec<Panel>,
+    operations: Vec<Operation>,
     seams: Vec<Seam>,
     next_panel_id: u32,
+    next_operation_id: u32,
     next_seam_id: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FoldRequest {
-    pub seam: SeamId,
+    pub operation: OperationId,
     pub angle_radians: f32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct RenderSeam {
+    pub operation: OperationId,
     pub kind: OperationKind,
     pub start: [f32; 3],
     pub end: [f32; 3],
@@ -92,11 +107,12 @@ pub enum ModelError {
     NonFinitePoint,
     DegenerateSegment,
     UnknownPanel(PanelId),
-    UnknownSeam(SeamId),
+    UnknownOperation(OperationId),
     SegmentEndpointOffBoundary,
     SegmentDoesNotSplitPanel,
-    CannotFoldCut(SeamId),
+    CannotFoldCut(OperationId),
     NonFiniteFoldAngle,
+    SeamReattachmentFailed(SeamId),
     TooManyRenderVertices,
 }
 
@@ -111,16 +127,25 @@ impl fmt::Display for ModelError {
             }
             Self::DegenerateSegment => formatter.write_str("segment endpoints must be distinct"),
             Self::UnknownPanel(panel) => write!(formatter, "unknown panel {}", panel.0),
-            Self::UnknownSeam(seam) => write!(formatter, "unknown seam {}", seam.0),
+            Self::UnknownOperation(operation) => {
+                write!(formatter, "unknown operation {}", operation.0)
+            }
             Self::SegmentEndpointOffBoundary => formatter
                 .write_str("both segment endpoints must lie on the selected panel boundary"),
             Self::SegmentDoesNotSplitPanel => formatter.write_str(
                 "segment does not split the selected convex panel into two valid panels",
             ),
-            Self::CannotFoldCut(seam) => {
-                write!(formatter, "seam {} is a cut and cannot be folded", seam.0)
-            }
+            Self::CannotFoldCut(operation) => write!(
+                formatter,
+                "operation {} is a cut and cannot be folded",
+                operation.0
+            ),
             Self::NonFiniteFoldAngle => formatter.write_str("fold angle must be finite"),
+            Self::SeamReattachmentFailed(seam) => write!(
+                formatter,
+                "could not reattach seam {} after splitting its incident panel",
+                seam.0
+            ),
             Self::TooManyRenderVertices => {
                 formatter.write_str("render snapshot exceeds u32 index capacity")
             }
@@ -148,14 +173,20 @@ impl PaperModel {
                 id: PanelId(0),
                 vertices: vec![0, 1, 2, 3],
             }],
+            operations: Vec::new(),
             seams: Vec::new(),
             next_panel_id: 1,
+            next_operation_id: 0,
             next_seam_id: 0,
         })
     }
 
     pub fn panels(&self) -> &[Panel] {
         &self.panels
+    }
+
+    pub fn operations(&self) -> &[Operation] {
+        &self.operations
     }
 
     pub fn seams(&self) -> &[Seam] {
@@ -181,13 +212,7 @@ impl PaperModel {
                     .iter()
                     .filter(|seam| seam.kind == OperationKind::Crease)
                 {
-                    let neighbor = if seam.panel_a == current {
-                        Some(seam.panel_b)
-                    } else if seam.panel_b == current {
-                        Some(seam.panel_a)
-                    } else {
-                        None
-                    };
+                    let neighbor = adjacent_panel(seam, current);
                     match neighbor {
                         Some(neighbor) if visited.insert(neighbor) => {
                             queue.push_back(neighbor);
@@ -202,16 +227,16 @@ impl PaperModel {
 
     /// Splits a convex panel using a straight boundary-to-boundary segment.
     ///
-    /// This first topology primitive is deliberately narrow. Future constrained
-    /// triangulation may subdivide arbitrary faces without changing the cut/crease
-    /// domain contract established here.
+    /// A logical operation can own multiple seam segments after later panel splits.
+    /// This lets topology evolve without changing the identity of an existing cut or
+    /// crease and keeps folds stable across subdivision.
     pub fn split_panel_with_segment(
         &mut self,
         panel_id: PanelId,
         start: Point2,
         end: Point2,
         kind: OperationKind,
-    ) -> Result<SeamId, ModelError> {
+    ) -> Result<OperationId, ModelError> {
         if !start.is_finite() || !end.is_finite() {
             return Err(ModelError::NonFinitePoint);
         }
@@ -236,9 +261,20 @@ impl PaperModel {
 
         let original_id = self.panels[panel_index].id;
         let new_id = PanelId(self.next_panel_id);
-        self.next_panel_id += 1;
+        let (reattached_seams, next_seam_id) = self.reattached_seams_after_split(
+            original_id,
+            new_id,
+            start,
+            end,
+            &a_polygon,
+            &b_polygon,
+        )?;
+
+        let operation_id = OperationId(self.next_operation_id);
+        let seam_id = SeamId(next_seam_id);
         let a_vertices = self.intern_polygon(&a_polygon);
         let b_vertices = self.intern_polygon(&b_polygon);
+
         self.panels[panel_index] = Panel {
             id: original_id,
             vertices: a_vertices,
@@ -247,18 +283,26 @@ impl PaperModel {
             id: new_id,
             vertices: b_vertices,
         });
-
-        let seam_id = SeamId(self.next_seam_id);
-        self.next_seam_id += 1;
+        self.seams = reattached_seams;
         self.seams.push(Seam {
             id: seam_id,
+            operation: operation_id,
             kind,
             start,
             end,
             panel_a: original_id,
             panel_b: new_id,
         });
-        Ok(seam_id)
+        self.operations.push(Operation {
+            id: operation_id,
+            kind,
+            start,
+            end,
+        });
+        self.next_panel_id += 1;
+        self.next_operation_id += 1;
+        self.next_seam_id = next_seam_id + 1;
+        Ok(operation_id)
     }
 
     pub fn render_snapshot(&self, fold: Option<FoldRequest>) -> Result<RenderSnapshot, ModelError> {
@@ -280,12 +324,7 @@ impl PaperModel {
                 let mut point_3d = Vec3::new(point.x, point.y, 0.0);
                 if should_rotate {
                     let state = fold_state.as_ref().expect("fold state checked above");
-                    point_3d = rotate_around_axis(
-                        point_3d,
-                        state.axis_start,
-                        state.axis_end,
-                        state.angle_radians,
-                    );
+                    point_3d = state.transform(point_3d);
                 }
                 vertices.push([point_3d.x, point_3d.y, point_3d.z]);
             }
@@ -301,10 +340,24 @@ impl PaperModel {
         let seams = self
             .seams
             .iter()
-            .map(|seam| RenderSeam {
-                kind: seam.kind,
-                start: [seam.start.x, seam.start.y, 0.0],
-                end: [seam.end.x, seam.end.y, 0.0],
+            .map(|seam| {
+                let mut start = Vec3::new(seam.start.x, seam.start.y, 0.0);
+                let mut end = Vec3::new(seam.end.x, seam.end.y, 0.0);
+                if let Some(state) = &fold_state {
+                    let seam_moves = seam.operation != state.operation
+                        && state.moving_panels.contains(&seam.panel_a)
+                        && state.moving_panels.contains(&seam.panel_b);
+                    if seam_moves {
+                        start = state.transform(start);
+                        end = state.transform(end);
+                    }
+                }
+                RenderSeam {
+                    operation: seam.operation,
+                    kind: seam.kind,
+                    start: [start.x, start.y, start.z],
+                    end: [end.x, end.y, end.z],
+                }
             })
             .collect();
 
@@ -331,39 +384,43 @@ impl PaperModel {
         if !request.angle_radians.is_finite() {
             return Err(ModelError::NonFiniteFoldAngle);
         }
-        let seam = self
+        let operation = self
+            .operations
+            .iter()
+            .find(|operation| operation.id == request.operation)
+            .ok_or(ModelError::UnknownOperation(request.operation))?;
+        if operation.kind == OperationKind::Cut {
+            return Err(ModelError::CannotFoldCut(request.operation));
+        }
+
+        let moving_seeds: HashSet<PanelId> = self
             .seams
             .iter()
-            .find(|seam| seam.id == request.seam)
-            .ok_or(ModelError::UnknownSeam(request.seam))?;
-        if seam.kind == OperationKind::Cut {
-            return Err(ModelError::CannotFoldCut(request.seam));
-        }
-        let moving_panels = self.connected_panels_without_seam(seam.panel_b, seam.id);
+            .filter(|seam| seam.operation == operation.id)
+            .map(|seam| seam.panel_b)
+            .collect();
+        let moving_panels = self.connected_panels_without_operation(&moving_seeds, operation.id);
         Ok(ResolvedFold {
-            axis_start: Vec3::new(seam.start.x, seam.start.y, 0.0),
-            axis_end: Vec3::new(seam.end.x, seam.end.y, 0.0),
+            operation: operation.id,
+            axis_start: Vec3::new(operation.start.x, operation.start.y, 0.0),
+            axis_end: Vec3::new(operation.end.x, operation.end.y, 0.0),
             angle_radians: request.angle_radians,
             moving_panels,
         })
     }
 
-    fn connected_panels_without_seam(&self, start: PanelId, excluded: SeamId) -> HashSet<PanelId> {
-        let mut visited = HashSet::from([start]);
-        let mut queue = VecDeque::from([start]);
+    fn connected_panels_without_operation(
+        &self,
+        seeds: &HashSet<PanelId>,
+        excluded: OperationId,
+    ) -> HashSet<PanelId> {
+        let mut visited = seeds.clone();
+        let mut queue: VecDeque<PanelId> = seeds.iter().copied().collect();
         while let Some(current) = queue.pop_front() {
-            for seam in self
-                .seams
-                .iter()
-                .filter(|seam| seam.kind == OperationKind::Crease && seam.id != excluded)
-            {
-                let neighbor = if seam.panel_a == current {
-                    Some(seam.panel_b)
-                } else if seam.panel_b == current {
-                    Some(seam.panel_a)
-                } else {
-                    None
-                };
+            for seam in self.seams.iter().filter(|seam| {
+                seam.kind == OperationKind::Crease && seam.operation != excluded
+            }) {
+                let neighbor = adjacent_panel(seam, current);
                 match neighbor {
                     Some(neighbor) if visited.insert(neighbor) => {
                         queue.push_back(neighbor);
@@ -373,6 +430,56 @@ impl PaperModel {
             }
         }
         visited
+    }
+
+    fn reattached_seams_after_split(
+        &self,
+        original_panel: PanelId,
+        new_panel: PanelId,
+        split_start: Point2,
+        split_end: Point2,
+        a_polygon: &[Point2],
+        b_polygon: &[Point2],
+    ) -> Result<(Vec<Seam>, u32), ModelError> {
+        let mut rebuilt = Vec::with_capacity(self.seams.len() + 2);
+        let mut next_seam_id = self.next_seam_id;
+
+        for seam in &self.seams {
+            let replaces_a = seam.panel_a == original_panel;
+            let replaces_b = seam.panel_b == original_panel;
+            if !replaces_a && !replaces_b {
+                rebuilt.push(seam.clone());
+                continue;
+            }
+
+            let pieces = seam_pieces_after_split(
+                seam,
+                split_start,
+                split_end,
+                original_panel,
+                new_panel,
+                a_polygon,
+                b_polygon,
+            )?;
+            for (piece_index, (start, end, child_panel)) in pieces.into_iter().enumerate() {
+                let mut piece = seam.clone();
+                if piece_index > 0 {
+                    piece.id = SeamId(next_seam_id);
+                    next_seam_id += 1;
+                }
+                piece.start = start;
+                piece.end = end;
+                if replaces_a {
+                    piece.panel_a = child_panel;
+                }
+                if replaces_b {
+                    piece.panel_b = child_panel;
+                }
+                rebuilt.push(piece);
+            }
+        }
+
+        Ok((rebuilt, next_seam_id))
     }
 
     fn intern_polygon(&mut self, polygon: &[Point2]) -> Vec<usize> {
@@ -418,10 +525,80 @@ impl fmt::Display for MeshBuildError {
 impl std::error::Error for MeshBuildError {}
 
 struct ResolvedFold {
+    operation: OperationId,
     axis_start: Vec3,
     axis_end: Vec3,
     angle_radians: f32,
     moving_panels: HashSet<PanelId>,
+}
+
+impl ResolvedFold {
+    fn transform(&self, point: Vec3) -> Vec3 {
+        rotate_around_axis(
+            point,
+            self.axis_start,
+            self.axis_end,
+            self.angle_radians,
+        )
+    }
+}
+
+fn adjacent_panel(seam: &Seam, panel: PanelId) -> Option<PanelId> {
+    if seam.panel_a == panel {
+        Some(seam.panel_b)
+    } else if seam.panel_b == panel {
+        Some(seam.panel_a)
+    } else {
+        None
+    }
+}
+
+fn seam_pieces_after_split(
+    seam: &Seam,
+    split_start: Point2,
+    split_end: Point2,
+    original_panel: PanelId,
+    new_panel: PanelId,
+    a_polygon: &[Point2],
+    b_polygon: &[Point2],
+) -> Result<Vec<(Point2, Point2, PanelId)>, ModelError> {
+    let mut parameters = vec![0.0, 1.0];
+    for split_point in [split_start, split_end] {
+        if point_on_segment(split_point, seam.start, seam.end) {
+            let parameter = segment_parameter(split_point, seam.start, seam.end);
+            if parameter > EPSILON && parameter < 1.0 - EPSILON {
+                parameters.push(parameter);
+            }
+        }
+    }
+    parameters.sort_by(|left, right| {
+        left.partial_cmp(right)
+            .expect("finite seam split parameters")
+    });
+    parameters.dedup_by(|left, right| (*left - *right).abs() <= EPSILON);
+
+    let mut pieces = Vec::with_capacity(parameters.len().saturating_sub(1));
+    for window in parameters.windows(2) {
+        let start = interpolate(seam.start, seam.end, window[0]);
+        let end = interpolate(seam.start, seam.end, window[1]);
+        if squared_distance(start, end) <= EPSILON * EPSILON {
+            continue;
+        }
+        let midpoint = interpolate(start, end, 0.5);
+        let on_a = point_on_boundary(midpoint, a_polygon);
+        let on_b = point_on_boundary(midpoint, b_polygon);
+        let panel = match (on_a, on_b) {
+            (true, false) => original_panel,
+            (false, true) => new_panel,
+            _ => return Err(ModelError::SeamReattachmentFailed(seam.id)),
+        };
+        pieces.push((start, end, panel));
+    }
+
+    if pieces.is_empty() {
+        return Err(ModelError::SeamReattachmentFailed(seam.id));
+    }
+    Ok(pieces)
 }
 
 fn split_convex_polygon(
@@ -480,6 +657,20 @@ fn point_on_segment(point: Point2, start: Point2, end: Point2) -> bool {
     dot >= -EPSILON && dot <= length_squared + EPSILON
 }
 
+fn segment_parameter(point: Point2, start: Point2, end: Point2) -> f32 {
+    let dx = end.x - start.x;
+    let dy = end.y - start.y;
+    let length_squared = dx * dx + dy * dy;
+    ((point.x - start.x) * dx + (point.y - start.y) * dy) / length_squared
+}
+
+fn interpolate(start: Point2, end: Point2, t: f32) -> Point2 {
+    Point2::new(
+        start.x + (end.x - start.x) * t,
+        start.y + (end.y - start.y) * t,
+    )
+}
+
 fn signed_side(direction: Point2, origin: Point2, point: Point2) -> f32 {
     direction.x * (point.y - origin.y) - direction.y * (point.x - origin.x)
 }
@@ -525,9 +716,9 @@ fn rotate_around_axis(point: Vec3, axis_start: Vec3, axis_end: Vec3, angle: f32)
 mod tests {
     use super::*;
 
-    fn split(kind: OperationKind) -> (PaperModel, SeamId) {
+    fn split(kind: OperationKind) -> (PaperModel, OperationId) {
         let mut model = PaperModel::rectangle(2.0, 1.0).unwrap();
-        let seam = model
+        let operation = model
             .split_panel_with_segment(
                 PanelId(0),
                 Point2::new(0.0, -0.5),
@@ -535,7 +726,7 @@ mod tests {
                 kind,
             )
             .unwrap();
-        (model, seam)
+        (model, operation)
     }
 
     #[test]
@@ -547,12 +738,12 @@ mod tests {
 
     #[test]
     fn cut_splits_connectivity() {
-        let (model, seam) = split(OperationKind::Cut);
+        let (model, operation) = split(OperationKind::Cut);
         assert_eq!(model.panels().len(), 2);
         assert_eq!(model.component_count(), 2);
         assert!(matches!(
             model.render_snapshot(Some(FoldRequest {
-                seam,
+                operation,
                 angle_radians: 0.5
             })),
             Err(ModelError::CannotFoldCut(_))
@@ -561,9 +752,9 @@ mod tests {
 
     #[test]
     fn crease_fold_produces_depth_and_three_d_lab_mesh() {
-        let (model, seam) = split(OperationKind::Crease);
+        let (model, operation) = split(OperationKind::Crease);
         let fold = FoldRequest {
-            seam,
+            operation,
             angle_radians: std::f32::consts::FRAC_PI_2,
         };
         let snapshot = model.render_snapshot(Some(fold)).unwrap();
@@ -584,5 +775,100 @@ mod tests {
             ),
             Err(ModelError::SegmentEndpointOffBoundary)
         );
+    }
+
+    #[test]
+    fn later_split_preserves_existing_crease_adjacency() {
+        let mut model = PaperModel::rectangle(2.0, 1.0).unwrap();
+        let crease = model
+            .split_panel_with_segment(
+                PanelId(0),
+                Point2::new(0.0, -0.5),
+                Point2::new(0.0, 0.5),
+                OperationKind::Crease,
+            )
+            .unwrap();
+        model
+            .split_panel_with_segment(
+                PanelId(0),
+                Point2::new(-1.0, 0.0),
+                Point2::new(0.0, 0.0),
+                OperationKind::Cut,
+            )
+            .unwrap();
+
+        let crease_segments: Vec<&Seam> = model
+            .seams()
+            .iter()
+            .filter(|seam| seam.operation == crease)
+            .collect();
+        assert_eq!(crease_segments.len(), 2);
+        assert_eq!(model.component_count(), 1);
+        assert!(crease_segments.iter().any(|seam| seam.panel_a == PanelId(0)));
+        assert!(crease_segments.iter().any(|seam| seam.panel_a == PanelId(2)));
+    }
+
+    #[test]
+    fn folding_subdivided_crease_excludes_all_of_its_segments() {
+        let mut model = PaperModel::rectangle(2.0, 1.0).unwrap();
+        let crease = model
+            .split_panel_with_segment(
+                PanelId(0),
+                Point2::new(0.0, -0.5),
+                Point2::new(0.0, 0.5),
+                OperationKind::Crease,
+            )
+            .unwrap();
+        model
+            .split_panel_with_segment(
+                PanelId(0),
+                Point2::new(-1.0, 0.0),
+                Point2::new(0.0, 0.0),
+                OperationKind::Cut,
+            )
+            .unwrap();
+
+        let snapshot = model
+            .render_snapshot(Some(FoldRequest {
+                operation: crease,
+                angle_radians: std::f32::consts::FRAC_PI_2,
+            }))
+            .unwrap();
+        assert!(snapshot.vertices.iter().any(|vertex| vertex[2].abs() > 0.5));
+    }
+
+    #[test]
+    fn downstream_crease_moves_with_folded_component() {
+        let mut model = PaperModel::rectangle(2.0, 1.0).unwrap();
+        let first = model
+            .split_panel_with_segment(
+                PanelId(0),
+                Point2::new(0.0, -0.5),
+                Point2::new(0.0, 0.5),
+                OperationKind::Crease,
+            )
+            .unwrap();
+        let second = model
+            .split_panel_with_segment(
+                PanelId(1),
+                Point2::new(0.5, -0.5),
+                Point2::new(0.5, 0.5),
+                OperationKind::Crease,
+            )
+            .unwrap();
+
+        let snapshot = model
+            .render_snapshot(Some(FoldRequest {
+                operation: first,
+                angle_radians: std::f32::consts::FRAC_PI_2,
+            }))
+            .unwrap();
+        let downstream = snapshot
+            .seams
+            .iter()
+            .find(|seam| seam.operation == second)
+            .unwrap();
+        assert!(downstream.start[2].abs() > 0.4);
+        assert!(downstream.end[2].abs() > 0.4);
     }
 }
