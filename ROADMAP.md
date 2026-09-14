@@ -21,6 +21,7 @@
 - Deterministic multi-face path tracing with inserted boundary intersections; one logical operation spans all generated seam segments.
 - Closed cuts that create detached inner panels plus authoritative outer/inner face boundary loops.
 - Multiple disjoint or nested hole loops with deterministic hole-aware rendering triangulation.
+- Boundary-bridge cuts that connect outer-to-hole or hole-to-hole components without inventing a new panel.
 - Cuts that split connected components.
 - Creases that preserve connectivity.
 - Deterministic rigid rotation around a crease axis.
@@ -29,15 +30,24 @@
 
 ## Next vertical slices
 
-1. Extend open-path arrangement to boundary bridges involving inner loops when a cut should open an annulus instead of splitting it into two faces.
-2. Integrate the collision foundation for BVH-backed paper self-intersection queries; keep collision detection advisory to `kirigami-core` validity until the boundary is proven.
-3. Upgrade rendering/physics triangulation to constrained Delaunay when mesh quality requires it; the outer/inner loops remain authoritative regardless of triangulator.
-4. Add multi-crease fold state and constraint propagation so genuinely bent creases have an authoritative solver. Use the physics engine only for material/mechanical behavior, never as the authority for crease meaning.
-5. Add first-party 3D rendering through the shared `3d-lab` renderer seam while retaining the lightweight Canvas renderer as a deterministic fallback/acceptance surface.
-6. Add layer ordering and flat-foldability validation.
-7. Add SVG/FOLD import/export and deterministic pattern fixtures.
-8. Add inverse-design/optimization experiments only after forward topology and validity are well tested.
+1. Integrate the collision foundation for BVH-backed paper self-intersection queries; keep collision detection advisory to `kirigami-core` validity until the boundary is proven.
+2. Upgrade rendering/physics triangulation to constrained Delaunay when mesh quality requires it; the authoritative boundary graph remains independent of the triangulator.
+3. Add multi-crease fold state and constraint propagation so genuinely bent creases have an authoritative solver. Use the physics engine only for material/mechanical behavior, never as the authority for crease meaning.
+4. Add first-party 3D rendering through the shared `3d-lab` renderer seam while retaining the lightweight Canvas renderer as a deterministic fallback/acceptance surface.
+5. Add layer ordering and flat-foldability validation.
+6. Add SVG/FOLD import/export and deterministic pattern fixtures.
+7. Add the 3D-target approximation layer described below once forward folding, collisions, and validity can score candidates reliably.
+8. Add broader inverse-design/optimization experiments only after the target-approximation loop is deterministic and measurable.
 
 ## Algorithm priorities
 
-Closed-path/hole arrangement and multiple boundary loops are now part of the deterministic topology foundation. Hole-aware rendering uses Earcut as a replaceable consumer of authoritative loops; the next algorithm work is boundary-bridge arrangement, BVH/self-intersection, then constrained triangulation and multi-crease constraint solving.
+Closed-path/hole arrangement, multiple boundary loops, and boundary bridges are now part of the deterministic topology foundation. Hole-aware rendering uses Earcut as a replaceable consumer of authoritative boundary geometry; the next algorithm work is BVH/self-intersection, then constrained triangulation and multi-crease constraint solving.
+
+
+## 3D target approximation
+
+A future user flow should accept an uploaded 3D model and produce a manufacturable kirigami approximation. File-format ingestion is not a `kirigami-core` responsibility: shared asset/3D adapters should normalize OBJ/glTF/GLB or other supported sources into `three_d_core::Mesh`, then the approximation layer consumes that renderer-neutral target mesh.
+
+The approximation layer should remain outside the authoritative paper model. It proposes deterministic candidate command sequences (panels, cuts, creases, and fold targets); `kirigami-core` validates and evaluates those candidates using the same topology and folding rules as hand-authored patterns. The initial objective should balance surface/shape error against panel count, total cut length, crease complexity, fold-angle complexity, self-intersection, flat-foldability/manufacturability, and material bounds. Candidate generation must retain seeds, input fingerprints, objective weights, and evaluation receipts so improvements can be benchmarked over time.
+
+The first useful vertical slice should use a bounded static target mesh, not arbitrary uploaded files: simplify/segment the target into approximately developable patches, generate one deterministic candidate pattern, fold it through the authoritative solver, and report geometric error plus pattern-complexity metrics. Browser upload and richer format support should come only after this mesh-to-pattern seam is proven.
