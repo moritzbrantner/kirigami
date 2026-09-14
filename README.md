@@ -4,12 +4,14 @@ Interactive kirigami geometry and simulation for the web, with authoritative Rus
 
 ## Architecture
 
-- `crates/kirigami-core`: authoritative sheet topology, cut/crease semantics, connectivity, fold transforms, and renderer-neutral snapshots.
+- `crates/kirigami-core`: authoritative paper semantics plus a half-edge planar subdivision for faces, boundaries, cuts, creases, connectivity, fold transforms, and renderer-neutral snapshots.
 - `crates/kirigami-wasm`: thin WebAssembly boundary. It does not own geometry rules.
 - `web`: presentation-only browser demo suitable for GitHub Pages.
 - `3d-lab / three-d-core`: shared renderer-neutral 3D mesh vocabulary, consumed at a pinned revision rather than copied locally.
 
-The first topology primitive splits a convex panel with a straight boundary-to-boundary cut or crease. This is intentionally narrower than the long-term model: the public domain boundary is established first, then the implementation can move to half-edge planar subdivision and constrained triangulation without shifting authority into the UI or renderer.
+`PlanarTopology` is the 2D geometric authority. It keeps stable face/half-edge relationships, splits shared edges consistently when later operations meet an existing crease, rejects chords that leave a face, and triangulates simple faces deterministically without assuming a convex fan. Cut versus crease meaning remains a kirigami domain concern layered on that subdivision: a geometric twin does not by itself mean the paper remains materially connected.
+
+The current domain operation is a straight boundary-to-boundary segment. The topology layer is intentionally reusable for arbitrary simple faces so later polyline cuts, holes, constrained triangulation quality upgrades, and collision queries do not require moving authority into the UI or renderer.
 
 The PR validation workflow checks formatting, clippy, tests, and the WASM target at the exact proposed head before integration.
 

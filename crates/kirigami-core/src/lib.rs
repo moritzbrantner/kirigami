@@ -3,6 +3,12 @@
 //! Rendering, browser interaction, and physical material simulation are consumers of
 //! this crate. Cuts and creases are topology operations here, not renderer effects.
 
+mod topology;
+
+pub use topology::{
+    FaceId, FaceTriangulation, HalfEdgeId, PlanarTopology, TopologyError, VertexId,
+};
+
 use serde::Serialize;
 use std::collections::{HashSet, VecDeque};
 use std::fmt;
@@ -45,7 +51,7 @@ pub struct SeamId(pub u32);
 #[derive(Debug, Clone, PartialEq)]
 pub struct Panel {
     pub id: PanelId,
-    pub vertices: Vec<usize>,
+    pub face: FaceId,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -69,7 +75,7 @@ pub struct Seam {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PaperModel {
-    vertices: Vec<Point2>,
+    topology: PlanarTopology,
     panels: Vec<Panel>,
     operations: Vec<Operation>,
     seams: Vec<Seam>,
@@ -113,6 +119,7 @@ pub enum ModelError {
     CannotFoldCut(OperationId),
     NonFiniteFoldAngle,
     SeamReattachmentFailed(SeamId),
+    Topology(TopologyError),
     TooManyRenderVertices,
 }
 
@@ -132,9 +139,8 @@ impl fmt::Display for ModelError {
             }
             Self::SegmentEndpointOffBoundary => formatter
                 .write_str("both segment endpoints must lie on the selected panel boundary"),
-            Self::SegmentDoesNotSplitPanel => formatter.write_str(
-                "segment does not split the selected convex panel into two valid panels",
-            ),
+            Self::SegmentDoesNotSplitPanel => formatter
+                .write_str("segment does not split the selected panel into two valid faces"),
             Self::CannotFoldCut(operation) => write!(
                 formatter,
                 "operation {} is a cut and cannot be folded",
@@ -146,6 +152,7 @@ impl fmt::Display for ModelError {
                 "could not reattach seam {} after splitting its incident panel",
                 seam.0
             ),
+            Self::Topology(error) => write!(formatter, "topology error: {error}"),
             Self::TooManyRenderVertices => {
                 formatter.write_str("render snapshot exceeds u32 index capacity")
             }
@@ -155,6 +162,12 @@ impl fmt::Display for ModelError {
 
 impl std::error::Error for ModelError {}
 
+impl From<TopologyError> for ModelError {
+    fn from(error: TopologyError) -> Self {
+        Self::Topology(error)
+    }
+}
+
 impl PaperModel {
     pub fn rectangle(width: f32, height: f32) -> Result<Self, ModelError> {
         if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
@@ -162,16 +175,17 @@ impl PaperModel {
         }
         let half_width = width * 0.5;
         let half_height = height * 0.5;
+        let topology = PlanarTopology::from_polygon(vec![
+            Point2::new(-half_width, -half_height),
+            Point2::new(half_width, -half_height),
+            Point2::new(half_width, half_height),
+            Point2::new(-half_width, half_height),
+        ])?;
         Ok(Self {
-            vertices: vec![
-                Point2::new(-half_width, -half_height),
-                Point2::new(half_width, -half_height),
-                Point2::new(half_width, half_height),
-                Point2::new(-half_width, half_height),
-            ],
+            topology,
             panels: vec![Panel {
                 id: PanelId(0),
-                vertices: vec![0, 1, 2, 3],
+                face: FaceId(0),
             }],
             operations: Vec::new(),
             seams: Vec::new(),
@@ -179,6 +193,10 @@ impl PaperModel {
             next_operation_id: 0,
             next_seam_id: 0,
         })
+    }
+
+    pub fn topology(&self) -> &PlanarTopology {
+        &self.topology
     }
 
     pub fn panels(&self) -> &[Panel] {
@@ -225,11 +243,11 @@ impl PaperModel {
         count
     }
 
-    /// Splits a convex panel using a straight boundary-to-boundary segment.
+    /// Splits a panel using a straight boundary-to-boundary segment.
     ///
-    /// A logical operation can own multiple seam segments after later panel splits.
-    /// This lets topology evolve without changing the identity of an existing cut or
-    /// crease and keeps folds stable across subdivision.
+    /// The geometric subdivision is owned by `PlanarTopology`. A logical operation can
+    /// own multiple seam segments after later panel splits, so topology can evolve
+    /// without changing the identity of an existing cut or crease.
     pub fn split_panel_with_segment(
         &mut self,
         panel_id: PanelId,
@@ -248,16 +266,16 @@ impl PaperModel {
             .iter()
             .position(|panel| panel.id == panel_id)
             .ok_or(ModelError::UnknownPanel(panel_id))?;
-        let polygon: Vec<Point2> = self.panels[panel_index]
-            .vertices
-            .iter()
-            .map(|&vertex| self.vertices[vertex])
-            .collect();
-        if !point_on_boundary(start, &polygon) || !point_on_boundary(end, &polygon) {
-            return Err(ModelError::SegmentEndpointOffBoundary);
-        }
-        let (a_polygon, b_polygon) = split_convex_polygon(&polygon, start, end)
-            .ok_or(ModelError::SegmentDoesNotSplitPanel)?;
+        let original_face = self.panels[panel_index].face;
+
+        // Keep edits fail-closed: geometric subdivision and seam reassignment are
+        // prepared against a candidate topology and committed only if both succeed.
+        let mut candidate_topology = self.topology.clone();
+        let new_face = candidate_topology
+            .split_face_with_segment(original_face, start, end)
+            .map_err(map_split_error)?;
+        let a_polygon = candidate_topology.face_polygon(original_face)?;
+        let b_polygon = candidate_topology.face_polygon(new_face)?;
 
         let original_id = self.panels[panel_index].id;
         let new_id = PanelId(self.next_panel_id);
@@ -272,16 +290,10 @@ impl PaperModel {
 
         let operation_id = OperationId(self.next_operation_id);
         let seam_id = SeamId(next_seam_id);
-        let a_vertices = self.intern_polygon(&a_polygon);
-        let b_vertices = self.intern_polygon(&b_polygon);
-
-        self.panels[panel_index] = Panel {
-            id: original_id,
-            vertices: a_vertices,
-        };
+        self.topology = candidate_topology;
         self.panels.push(Panel {
             id: new_id,
-            vertices: b_vertices,
+            face: new_face,
         });
         self.seams = reattached_seams;
         self.seams.push(Seam {
@@ -314,13 +326,12 @@ impl PaperModel {
         let mut indices = Vec::new();
 
         for panel in &self.panels {
-            let panel_start =
-                u32::try_from(vertices.len()).map_err(|_| ModelError::TooManyRenderVertices)?;
+            let triangulation = self.topology.triangulate_face(panel.face)?;
+            let panel_start = vertices.len();
             let should_rotate = fold_state
                 .as_ref()
                 .is_some_and(|state| state.moving_panels.contains(&panel.id));
-            for &vertex_index in &panel.vertices {
-                let point = self.vertices[vertex_index];
+            for point in triangulation.vertices {
                 let mut point_3d = Vec3::new(point.x, point.y, 0.0);
                 if should_rotate {
                     let state = fold_state.as_ref().expect("fold state checked above");
@@ -328,12 +339,16 @@ impl PaperModel {
                 }
                 vertices.push([point_3d.x, point_3d.y, point_3d.z]);
             }
-            for triangle_offset in 1..panel.vertices.len().saturating_sub(1) {
-                let b = u32::try_from(triangle_offset)
-                    .map_err(|_| ModelError::TooManyRenderVertices)?;
-                let c = u32::try_from(triangle_offset + 1)
-                    .map_err(|_| ModelError::TooManyRenderVertices)?;
-                indices.extend_from_slice(&[panel_start, panel_start + b, panel_start + c]);
+            for triangle in triangulation.triangles {
+                for local_index in triangle {
+                    let global_index = panel_start
+                        .checked_add(local_index as usize)
+                        .ok_or(ModelError::TooManyRenderVertices)?;
+                    indices.push(
+                        u32::try_from(global_index)
+                            .map_err(|_| ModelError::TooManyRenderVertices)?,
+                    );
+                }
             }
         }
 
@@ -483,27 +498,6 @@ impl PaperModel {
 
         Ok((rebuilt, next_seam_id))
     }
-
-    fn intern_polygon(&mut self, polygon: &[Point2]) -> Vec<usize> {
-        polygon
-            .iter()
-            .copied()
-            .map(|point| self.intern_vertex(point))
-            .collect()
-    }
-
-    fn intern_vertex(&mut self, point: Point2) -> usize {
-        if let Some((index, _)) = self
-            .vertices
-            .iter()
-            .enumerate()
-            .find(|(_, candidate)| squared_distance(**candidate, point) <= EPSILON * EPSILON)
-        {
-            return index;
-        }
-        self.vertices.push(point);
-        self.vertices.len() - 1
-    }
 }
 
 #[derive(Debug)]
@@ -537,6 +531,17 @@ struct ResolvedFold {
 impl ResolvedFold {
     fn transform(&self, point: Vec3) -> Vec3 {
         rotate_around_axis(point, self.axis_start, self.axis_end, self.angle_radians)
+    }
+}
+
+fn map_split_error(error: TopologyError) -> ModelError {
+    match error {
+        TopologyError::PointOffBoundary => ModelError::SegmentEndpointOffBoundary,
+        TopologyError::DegenerateSegment => ModelError::DegenerateSegment,
+        TopologyError::SegmentDoesNotSplitFace | TopologyError::SegmentLeavesFace => {
+            ModelError::SegmentDoesNotSplitPanel
+        }
+        other => ModelError::Topology(other),
     }
 }
 
@@ -598,45 +603,6 @@ fn seam_pieces_after_split(
     Ok(pieces)
 }
 
-fn split_convex_polygon(
-    polygon: &[Point2],
-    start: Point2,
-    end: Point2,
-) -> Option<(Vec<Point2>, Vec<Point2>)> {
-    let direction = Point2::new(end.x - start.x, end.y - start.y);
-    let mut positive = Vec::new();
-    let mut negative = Vec::new();
-
-    for index in 0..polygon.len() {
-        let current = polygon[index];
-        let next = polygon[(index + 1) % polygon.len()];
-        let current_side = signed_side(direction, start, current);
-        let next_side = signed_side(direction, start, next);
-
-        if current_side >= -EPSILON {
-            push_distinct(&mut positive, current);
-        }
-        if current_side <= EPSILON {
-            push_distinct(&mut negative, current);
-        }
-        if (current_side > EPSILON && next_side < -EPSILON)
-            || (current_side < -EPSILON && next_side > EPSILON)
-        {
-            let t = current_side / (current_side - next_side);
-            let intersection = Point2::new(
-                current.x + (next.x - current.x) * t,
-                current.y + (next.y - current.y) * t,
-            );
-            push_distinct(&mut positive, intersection);
-            push_distinct(&mut negative, intersection);
-        }
-    }
-
-    normalize_polygon(&mut positive);
-    normalize_polygon(&mut negative);
-    (positive.len() >= 3 && negative.len() >= 3).then_some((positive, negative))
-}
-
 fn point_on_boundary(point: Point2, polygon: &[Point2]) -> bool {
     (0..polygon.len())
         .any(|index| point_on_segment(point, polygon[index], polygon[(index + 1) % polygon.len()]))
@@ -666,28 +632,6 @@ fn interpolate(start: Point2, end: Point2, t: f32) -> Point2 {
         start.x + (end.x - start.x) * t,
         start.y + (end.y - start.y) * t,
     )
-}
-
-fn signed_side(direction: Point2, origin: Point2, point: Point2) -> f32 {
-    direction.x * (point.y - origin.y) - direction.y * (point.x - origin.x)
-}
-
-fn push_distinct(points: &mut Vec<Point2>, point: Point2) {
-    if points
-        .last()
-        .is_none_or(|last| squared_distance(*last, point) > EPSILON * EPSILON)
-    {
-        points.push(point);
-    }
-}
-
-fn normalize_polygon(points: &mut Vec<Point2>) {
-    if points.len() > 1
-        && squared_distance(points[0], *points.last().expect("non-empty polygon"))
-            <= EPSILON * EPSILON
-    {
-        points.pop();
-    }
 }
 
 fn squared_distance(a: Point2, b: Point2) -> f32 {
@@ -730,7 +674,9 @@ mod tests {
     fn crease_splits_topology_but_preserves_connectivity() {
         let (model, _) = split(OperationKind::Crease);
         assert_eq!(model.panels().len(), 2);
+        assert_eq!(model.topology().face_count(), 2);
         assert_eq!(model.component_count(), 1);
+        model.topology().validate().unwrap();
     }
 
     #[test]
@@ -761,8 +707,9 @@ mod tests {
     }
 
     #[test]
-    fn split_rejects_non_boundary_endpoints() {
+    fn split_rejects_non_boundary_endpoints_without_mutation() {
         let mut model = PaperModel::rectangle(2.0, 1.0).unwrap();
+        let before = model.clone();
         assert_eq!(
             model.split_panel_with_segment(
                 PanelId(0),
@@ -772,6 +719,7 @@ mod tests {
             ),
             Err(ModelError::SegmentEndpointOffBoundary)
         );
+        assert_eq!(model, before);
     }
 
     #[test]
@@ -801,6 +749,8 @@ mod tests {
             .collect();
         assert_eq!(crease_segments.len(), 2);
         assert_eq!(model.component_count(), 1);
+        assert_eq!(model.topology().face_count(), 3);
+        model.topology().validate().unwrap();
         assert!(
             crease_segments
                 .iter()
