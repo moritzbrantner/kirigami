@@ -115,7 +115,7 @@ impl PlanarTopology {
         }
 
         let area = signed_area(&points);
-        if area.abs() <= EPSILON {
+        if area.abs() <= polygon_area_tolerance(&points) {
             return Err(TopologyError::DegeneratePolygon);
         }
         if area < 0.0 {
@@ -198,7 +198,7 @@ impl PlanarTopology {
                 let a = vertices[previous];
                 let b = vertices[current];
                 let c = vertices[next];
-                if orientation(a, b, c) <= EPSILON {
+                if orientation(a, b, c) <= orientation_tolerance(a, b, c) {
                     continue;
                 }
 
@@ -402,13 +402,22 @@ impl PlanarTopology {
                 || edge_start_vertex == end_vertex
                 || edge_end_vertex == end_vertex;
             if incident {
-                let other = if edge_start_vertex == start_vertex || edge_start_vertex == end_vertex
-                {
-                    edge_end
+                let (shared, other, chord_other) = if edge_start_vertex == start_vertex {
+                    (start, edge_end, end)
+                } else if edge_end_vertex == start_vertex {
+                    (start, edge_start, end)
+                } else if edge_start_vertex == end_vertex {
+                    (end, edge_end, start)
                 } else {
-                    edge_start
+                    (end, edge_start, start)
                 };
-                if orientation(start, end, other).abs() <= EPSILON {
+                let edge_direction = Point2::new(other.x - shared.x, other.y - shared.y);
+                let chord_direction =
+                    Point2::new(chord_other.x - shared.x, chord_other.y - shared.y);
+                let overlaps_chord = is_collinear(start, end, other)
+                    && edge_direction.x * chord_direction.x + edge_direction.y * chord_direction.y
+                        > squared_length_tolerance(shared, chord_other);
+                if overlaps_chord {
                     return Err(TopologyError::SegmentLeavesFace);
                 }
                 continue;
@@ -433,8 +442,9 @@ impl PlanarTopology {
             if vertex == end_vertex {
                 return Err(TopologyError::SegmentDoesNotSplitFace);
             }
-            let side = orientation(start, end, self.vertex(vertex).point);
-            if side.abs() > EPSILON {
+            let point = self.vertex(vertex).point;
+            let side = orientation(start, end, point);
+            if side.abs() > orientation_tolerance(start, end, point) {
                 return Ok(side);
             }
             current = self.edge(current).next;
@@ -599,8 +609,30 @@ fn signed_area(points: &[Point2]) -> f32 {
     twice_area * 0.5
 }
 
+fn polygon_area_tolerance(points: &[Point2]) -> f32 {
+    let max_edge_squared = (0..points.len())
+        .map(|index| squared_distance(points[index], points[(index + 1) % points.len()]))
+        .fold(0.0_f32, f32::max);
+    max_edge_squared * f32::EPSILON * points.len() as f32 * 16.0
+}
+
 fn orientation(a: Point2, b: Point2, c: Point2) -> f32 {
     (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+}
+
+fn orientation_tolerance(a: Point2, b: Point2, c: Point2) -> f32 {
+    let scale_squared = squared_distance(a, b)
+        .max(squared_distance(a, c))
+        .max(squared_distance(b, c));
+    scale_squared * f32::EPSILON * 16.0
+}
+
+fn is_collinear(a: Point2, b: Point2, c: Point2) -> bool {
+    orientation(a, b, c).abs() <= orientation_tolerance(a, b, c)
+}
+
+fn squared_length_tolerance(a: Point2, b: Point2) -> f32 {
+    squared_distance(a, b) * f32::EPSILON * 16.0
 }
 
 fn approximately_equal(a: Point2, b: Point2) -> bool {
@@ -614,12 +646,13 @@ fn squared_distance(a: Point2, b: Point2) -> f32 {
 }
 
 fn point_on_segment(point: Point2, start: Point2, end: Point2) -> bool {
-    if orientation(start, end, point).abs() > EPSILON {
+    if !is_collinear(start, end, point) {
         return false;
     }
     let dot = (point.x - start.x) * (end.x - start.x) + (point.y - start.y) * (end.y - start.y);
     let length_squared = squared_distance(start, end);
-    dot >= -EPSILON && dot <= length_squared + EPSILON
+    let projection_tolerance = length_squared * f32::EPSILON * 16.0;
+    dot >= -projection_tolerance && dot <= length_squared + projection_tolerance
 }
 
 fn point_on_polygon_boundary(point: Point2, polygon: &[Point2]) -> bool {
@@ -648,16 +681,22 @@ fn segments_intersect(a: Point2, b: Point2, c: Point2, d: Point2) -> bool {
     let ab_d = orientation(a, b, d);
     let cd_a = orientation(c, d, a);
     let cd_b = orientation(c, d, b);
+    let ab_c_tolerance = orientation_tolerance(a, b, c);
+    let ab_d_tolerance = orientation_tolerance(a, b, d);
+    let cd_a_tolerance = orientation_tolerance(c, d, a);
+    let cd_b_tolerance = orientation_tolerance(c, d, b);
 
-    if ((ab_c > EPSILON && ab_d < -EPSILON) || (ab_c < -EPSILON && ab_d > EPSILON))
-        && ((cd_a > EPSILON && cd_b < -EPSILON) || (cd_a < -EPSILON && cd_b > EPSILON))
+    if ((ab_c > ab_c_tolerance && ab_d < -ab_d_tolerance)
+        || (ab_c < -ab_c_tolerance && ab_d > ab_d_tolerance))
+        && ((cd_a > cd_a_tolerance && cd_b < -cd_b_tolerance)
+            || (cd_a < -cd_a_tolerance && cd_b > cd_b_tolerance))
     {
         return true;
     }
-    (ab_c.abs() <= EPSILON && point_on_segment(c, a, b))
-        || (ab_d.abs() <= EPSILON && point_on_segment(d, a, b))
-        || (cd_a.abs() <= EPSILON && point_on_segment(a, c, d))
-        || (cd_b.abs() <= EPSILON && point_on_segment(b, c, d))
+    (ab_c.abs() <= ab_c_tolerance && point_on_segment(c, a, b))
+        || (ab_d.abs() <= ab_d_tolerance && point_on_segment(d, a, b))
+        || (cd_a.abs() <= cd_a_tolerance && point_on_segment(a, c, d))
+        || (cd_b.abs() <= cd_b_tolerance && point_on_segment(b, c, d))
 }
 
 fn is_simple_polygon(points: &[Point2]) -> bool {
@@ -689,7 +728,9 @@ fn point_in_or_on_triangle(point: Point2, a: Point2, b: Point2, c: Point2) -> bo
     let ab = orientation(a, b, point);
     let bc = orientation(b, c, point);
     let ca = orientation(c, a, point);
-    ab >= -EPSILON && bc >= -EPSILON && ca >= -EPSILON
+    ab >= -orientation_tolerance(a, b, point)
+        && bc >= -orientation_tolerance(b, c, point)
+        && ca >= -orientation_tolerance(c, a, point)
 }
 
 fn interpolate(start: Point2, end: Point2, t: f32) -> Point2 {
@@ -738,6 +779,45 @@ mod tests {
         .unwrap();
         let triangulation = topology.triangulate_face(FaceId(0)).unwrap();
         assert_eq!(triangulation.triangles.len(), 3);
+    }
+
+    #[test]
+    fn accepts_small_non_degenerate_face() {
+        let topology = PlanarTopology::from_polygon(vec![
+            Point2::new(0.0, 0.0),
+            Point2::new(0.001, 0.0),
+            Point2::new(0.001, 0.001),
+            Point2::new(0.0, 0.001),
+        ])
+        .unwrap();
+        assert_eq!(topology.face_count(), 1);
+        assert_eq!(
+            topology
+                .triangulate_face(FaceId(0))
+                .unwrap()
+                .triangles
+                .len(),
+            2
+        );
+        topology.validate().unwrap();
+    }
+
+    #[test]
+    fn allows_chord_continuing_past_reflex_edge() {
+        let mut topology = PlanarTopology::from_polygon(vec![
+            Point2::new(0.0, 0.0),
+            Point2::new(2.0, 0.0),
+            Point2::new(2.0, 2.0),
+            Point2::new(1.0, 2.0),
+            Point2::new(1.0, 1.0),
+            Point2::new(0.0, 1.0),
+        ])
+        .unwrap();
+        topology
+            .split_face_with_segment(FaceId(0), Point2::new(1.0, 1.0), Point2::new(1.0, 0.0))
+            .unwrap();
+        assert_eq!(topology.face_count(), 2);
+        topology.validate().unwrap();
     }
 
     #[test]
