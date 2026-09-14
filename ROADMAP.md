@@ -17,6 +17,8 @@
 - Shared-edge subdivision when a later operation terminates on an existing crease.
 - Rejection of chords that leave/cross a simple face.
 - Deterministic ear-clipping triangulation for simple concave faces; rendering no longer assumes convex fan triangulation.
+- Transactional single-face polyline splitting for bent cuts and segmented straight creases.
+- Deterministic multi-face path tracing with inserted boundary intersections; one logical operation spans all generated seam segments.
 - Cuts that split connected components.
 - Creases that preserve connectivity.
 - Deterministic rigid rotation around a crease axis.
@@ -25,15 +27,14 @@
 
 ## Next vertical slices
 
-1. Generalize operations from one chord to arbitrary cut and crease polylines, including multiple face crossings and deterministic intersection insertion.
-2. Add holes/multiple boundary loops and upgrade triangulation to constrained Delaunay when mesh quality or physical simulation requires it; keep boundary constraints authoritative regardless of triangulator.
-3. Integrate the collision foundation for BVH-backed paper self-intersection queries; keep collision detection advisory to `kirigami-core` validity until the boundary is proven.
-4. Add multi-crease fold state and constraint propagation. Use the physics engine only for material/mechanical behavior, never as the authority for crease meaning.
-5. Add first-party 3D rendering through the shared `3d-lab` renderer seam while retaining the lightweight Canvas renderer as a deterministic fallback/acceptance surface.
-6. Add layer ordering and flat-foldability validation.
-7. Add SVG/FOLD import/export and deterministic pattern fixtures.
-8. Add inverse-design/optimization experiments only after forward topology and validity are well tested.
+1. Add closed cut paths / holes and multiple boundary loops; then upgrade triangulation to constrained Delaunay when mesh quality or physical simulation requires it while keeping boundary constraints authoritative.
+2. Integrate the collision foundation for BVH-backed paper self-intersection queries; keep collision detection advisory to `kirigami-core` validity until the boundary is proven.
+3. Add multi-crease fold state and constraint propagation so genuinely bent creases have an authoritative solver. Use the physics engine only for material/mechanical behavior, never as the authority for crease meaning.
+4. Add first-party 3D rendering through the shared `3d-lab` renderer seam while retaining the lightweight Canvas renderer as a deterministic fallback/acceptance surface.
+5. Add layer ordering and flat-foldability validation.
+6. Add SVG/FOLD import/export and deterministic pattern fixtures.
+7. Add inverse-design/optimization experiments only after forward topology and validity are well tested.
 
 ## Algorithm priorities
 
-The immediate algorithm work is robust segment intersection across multiple faces, polyline arrangement insertion, constrained triangulation with holes, connected-components traversal, and BVH/self-intersection. Constraint solving and layer ordering follow once multi-operation topology is stable.
+The immediate algorithm work is closed-path/hole arrangement, constrained triangulation with multiple boundary loops, BVH/self-intersection, and then multi-crease constraint solving plus layer ordering. Multi-face open-path intersection insertion is now part of the deterministic topology foundation.

@@ -281,15 +281,67 @@ impl PaperModel {
         path: &[Point2],
         kind: OperationKind,
     ) -> Result<OperationId, ModelError> {
-        if path.len() < 2 || path.iter().any(|point| !point.is_finite()) {
-            return Err(ModelError::InvalidPath);
+        validate_operation_path(path, kind)?;
+        let mut candidate = self.clone();
+        let operation_id = OperationId(candidate.next_operation_id);
+        candidate.apply_panel_path_split(panel_id, path, kind, operation_id)?;
+        candidate.operations.push(Operation {
+            id: operation_id,
+            kind,
+            path: path.to_vec(),
+        });
+        candidate.next_operation_id += 1;
+        *self = candidate;
+        Ok(operation_id)
+    }
+
+    /// Applies one logical cut or straight crease across every face traversed by the
+    /// path. Boundary intersections become deterministic seam endpoints while the
+    /// operation identity remains stable across all generated panel splits.
+    pub fn split_across_panels_with_polyline(
+        &mut self,
+        path: &[Point2],
+        kind: OperationKind,
+    ) -> Result<OperationId, ModelError> {
+        validate_operation_path(path, kind)?;
+        let fragments = self
+            .topology
+            .trace_polyline_across_faces(path)
+            .map_err(map_split_error)?;
+        let mut candidate = self.clone();
+        let operation_id = OperationId(candidate.next_operation_id);
+
+        for fragment in fragments {
+            let face = candidate
+                .topology
+                .face_containing_fragment(&fragment)
+                .map_err(map_split_error)?;
+            let panel_id = candidate
+                .panels
+                .iter()
+                .find(|panel| panel.face == face)
+                .map(|panel| panel.id)
+                .ok_or(ModelError::Topology(TopologyError::InvalidTopology))?;
+            candidate.apply_panel_path_split(panel_id, &fragment, kind, operation_id)?;
         }
-        if path
-            .windows(2)
-            .any(|segment| squared_distance(segment[0], segment[1]) <= EPSILON * EPSILON)
-        {
-            return Err(ModelError::DegenerateSegment);
-        }
+
+        candidate.operations.push(Operation {
+            id: operation_id,
+            kind,
+            path: path.to_vec(),
+        });
+        candidate.next_operation_id += 1;
+        *self = candidate;
+        Ok(operation_id)
+    }
+
+    fn apply_panel_path_split(
+        &mut self,
+        panel_id: PanelId,
+        path: &[Point2],
+        kind: OperationKind,
+        operation_id: OperationId,
+    ) -> Result<(), ModelError> {
         let panel_index = self
             .panels
             .iter()
@@ -297,20 +349,18 @@ impl PaperModel {
             .ok_or(ModelError::UnknownPanel(panel_id))?;
         let original_face = self.panels[panel_index].face;
         let start = path[0];
-        let end = *path.last().expect("path length checked");
-
-        let mut candidate_topology = self.topology.clone();
+        let end = *path.last().expect("path validated");
         let new_face = if path.len() == 2 {
-            candidate_topology
+            self.topology
                 .split_face_with_segment(original_face, start, end)
                 .map_err(map_split_error)?
         } else {
-            candidate_topology
+            self.topology
                 .split_face_with_polyline(original_face, path)
                 .map_err(map_split_error)?
         };
-        let a_polygon = candidate_topology.face_polygon(original_face)?;
-        let b_polygon = candidate_topology.face_polygon(new_face)?;
+        let a_polygon = self.topology.face_polygon(original_face)?;
+        let b_polygon = self.topology.face_polygon(new_face)?;
 
         let original_id = self.panels[panel_index].id;
         let new_id = PanelId(self.next_panel_id);
@@ -323,7 +373,6 @@ impl PaperModel {
             &b_polygon,
         )?;
 
-        let operation_id = OperationId(self.next_operation_id);
         let mut new_seams = Vec::with_capacity(path.len() - 1);
         for segment in path.windows(2) {
             new_seams.push(Seam {
@@ -338,22 +387,15 @@ impl PaperModel {
             next_seam_id += 1;
         }
 
-        self.topology = candidate_topology;
         self.panels.push(Panel {
             id: new_id,
             face: new_face,
         });
         self.seams = reattached_seams;
         self.seams.extend(new_seams);
-        self.operations.push(Operation {
-            id: operation_id,
-            kind,
-            path: path.to_vec(),
-        });
         self.next_panel_id += 1;
-        self.next_operation_id += 1;
         self.next_seam_id = next_seam_id;
-        Ok(operation_id)
+        Ok(())
     }
 
     pub fn render_snapshot(&self, fold: Option<FoldRequest>) -> Result<RenderSnapshot, ModelError> {
@@ -578,6 +620,22 @@ impl ResolvedFold {
     }
 }
 
+fn validate_operation_path(path: &[Point2], kind: OperationKind) -> Result<(), ModelError> {
+    if path.len() < 2 || path.iter().any(|point| !point.is_finite()) {
+        return Err(ModelError::InvalidPath);
+    }
+    if path
+        .windows(2)
+        .any(|segment| squared_distance(segment[0], segment[1]) <= EPSILON * EPSILON)
+    {
+        return Err(ModelError::DegenerateSegment);
+    }
+    if kind == OperationKind::Crease && !path_is_straight(path) {
+        return Err(ModelError::BentCreaseRequiresConstraintSolver);
+    }
+    Ok(())
+}
+
 fn map_split_error(error: TopologyError) -> ModelError {
     match error {
         TopologyError::PointOffBoundary => ModelError::SegmentEndpointOffBoundary,
@@ -585,6 +643,9 @@ fn map_split_error(error: TopologyError) -> ModelError {
         TopologyError::TooFewPathPoints => ModelError::InvalidPath,
         TopologyError::PolylineSelfIntersecting
         | TopologyError::PolylineLeavesFace
+        | TopologyError::PolylineLeavesTopology
+        | TopologyError::PolylineOverlapsBoundary
+        | TopologyError::PolylineCrossingAmbiguous
         | TopologyError::SegmentDoesNotSplitFace
         | TopologyError::SegmentLeavesFace => ModelError::SegmentDoesNotSplitPanel,
         other => ModelError::Topology(other),
@@ -855,6 +916,151 @@ mod tests {
             }))
             .unwrap();
         assert!(snapshot.vertices.iter().any(|vertex| vertex[2].abs() > 0.5));
+    }
+
+    #[test]
+    fn cut_across_existing_crease_is_one_operation() {
+        let mut model = PaperModel::rectangle(2.0, 2.0).unwrap();
+        let first_crease = model
+            .split_panel_with_segment(
+                PanelId(0),
+                Point2::new(0.0, -1.0),
+                Point2::new(0.0, 1.0),
+                OperationKind::Crease,
+            )
+            .unwrap();
+        let cut = model
+            .split_across_panels_with_polyline(
+                &[Point2::new(-1.0, 0.0), Point2::new(1.0, 0.0)],
+                OperationKind::Cut,
+            )
+            .unwrap();
+
+        assert_eq!(model.panels().len(), 4);
+        assert_eq!(model.topology().face_count(), 4);
+        assert_eq!(model.component_count(), 2);
+        assert_eq!(
+            model
+                .seams()
+                .iter()
+                .filter(|seam| seam.operation == cut)
+                .count(),
+            2
+        );
+        assert_eq!(
+            model
+                .seams()
+                .iter()
+                .filter(|seam| seam.operation == first_crease)
+                .count(),
+            2
+        );
+        assert_eq!(model.operations().last().unwrap().path.len(), 2);
+        model.topology().validate().unwrap();
+    }
+
+    #[test]
+    fn bent_cut_across_existing_crease_preserves_one_operation() {
+        let mut model = PaperModel::rectangle(2.0, 2.0).unwrap();
+        model
+            .split_panel_with_segment(
+                PanelId(0),
+                Point2::new(0.0, -1.0),
+                Point2::new(0.0, 1.0),
+                OperationKind::Crease,
+            )
+            .unwrap();
+        let path = [
+            Point2::new(-1.0, -0.5),
+            Point2::new(-0.25, 0.25),
+            Point2::new(0.75, 0.25),
+            Point2::new(1.0, -0.5),
+        ];
+        let cut = model
+            .split_across_panels_with_polyline(&path, OperationKind::Cut)
+            .unwrap();
+
+        assert_eq!(model.panels().len(), 4);
+        assert_eq!(model.component_count(), 2);
+        assert_eq!(model.operations().last().unwrap().path, path);
+        assert_eq!(
+            model
+                .seams()
+                .iter()
+                .filter(|seam| seam.operation == cut)
+                .count(),
+            4
+        );
+        model.topology().validate().unwrap();
+    }
+
+    #[test]
+    fn straight_crease_can_cross_existing_crease_with_one_fold_side() {
+        let mut model = PaperModel::rectangle(2.0, 2.0).unwrap();
+        model
+            .split_panel_with_segment(
+                PanelId(0),
+                Point2::new(0.0, -1.0),
+                Point2::new(0.0, 1.0),
+                OperationKind::Crease,
+            )
+            .unwrap();
+        let horizontal = model
+            .split_across_panels_with_polyline(
+                &[Point2::new(-1.0, 0.0), Point2::new(1.0, 0.0)],
+                OperationKind::Crease,
+            )
+            .unwrap();
+
+        assert_eq!(model.component_count(), 1);
+        assert_eq!(
+            model
+                .seams()
+                .iter()
+                .filter(|seam| seam.operation == horizontal)
+                .count(),
+            2
+        );
+        let resolved = model
+            .resolve_fold(FoldRequest {
+                operation: horizontal,
+                angle_radians: std::f32::consts::FRAC_PI_2,
+            })
+            .unwrap();
+        assert_eq!(resolved.moving_panels.len(), 2);
+        let snapshot = model
+            .render_snapshot(Some(FoldRequest {
+                operation: horizontal,
+                angle_radians: std::f32::consts::FRAC_PI_2,
+            }))
+            .unwrap();
+        assert!(snapshot.vertices.iter().any(|vertex| vertex[2].abs() > 0.5));
+    }
+
+    #[test]
+    fn multi_face_path_failure_is_transactional() {
+        let mut model = PaperModel::rectangle(2.0, 2.0).unwrap();
+        model
+            .split_panel_with_segment(
+                PanelId(0),
+                Point2::new(0.0, -1.0),
+                Point2::new(0.0, 1.0),
+                OperationKind::Crease,
+            )
+            .unwrap();
+        let before = model.clone();
+        assert_eq!(
+            model.split_across_panels_with_polyline(
+                &[
+                    Point2::new(-1.0, 0.0),
+                    Point2::new(0.0, 0.0),
+                    Point2::new(0.0, 0.75),
+                ],
+                OperationKind::Cut,
+            ),
+            Err(ModelError::SegmentDoesNotSplitPanel)
+        );
+        assert_eq!(model, before);
     }
 
     #[test]
