@@ -112,9 +112,8 @@ impl fmt::Display for ModelError {
             Self::DegenerateSegment => formatter.write_str("segment endpoints must be distinct"),
             Self::UnknownPanel(panel) => write!(formatter, "unknown panel {}", panel.0),
             Self::UnknownSeam(seam) => write!(formatter, "unknown seam {}", seam.0),
-            Self::SegmentEndpointOffBoundary => formatter.write_str(
-                "both segment endpoints must lie on the selected panel boundary",
-            ),
+            Self::SegmentEndpointOffBoundary => formatter
+                .write_str("both segment endpoints must lie on the selected panel boundary"),
             Self::SegmentDoesNotSplitPanel => formatter.write_str(
                 "segment does not split the selected convex panel into two valid panels",
             ),
@@ -189,10 +188,11 @@ impl PaperModel {
                     } else {
                         None
                     };
-                    if let Some(neighbor) = neighbor {
-                        if visited.insert(neighbor) {
+                    match neighbor {
+                        Some(neighbor) if visited.insert(neighbor) => {
                             queue.push_back(neighbor);
                         }
+                        _ => {}
                     }
                 }
             }
@@ -261,10 +261,7 @@ impl PaperModel {
         Ok(seam_id)
     }
 
-    pub fn render_snapshot(
-        &self,
-        fold: Option<FoldRequest>,
-    ) -> Result<RenderSnapshot, ModelError> {
+    pub fn render_snapshot(&self, fold: Option<FoldRequest>) -> Result<RenderSnapshot, ModelError> {
         let fold_state = match fold {
             Some(request) => Some(self.resolve_fold(request)?),
             None => None,
@@ -367,10 +364,11 @@ impl PaperModel {
                 } else {
                     None
                 };
-                if let Some(neighbor) = neighbor {
-                    if visited.insert(neighbor) {
+                match neighbor {
+                    Some(neighbor) if visited.insert(neighbor) => {
                         queue.push_back(neighbor);
                     }
+                    _ => {}
                 }
             }
         }
@@ -466,13 +464,8 @@ fn split_convex_polygon(
 }
 
 fn point_on_boundary(point: Point2, polygon: &[Point2]) -> bool {
-    (0..polygon.len()).any(|index| {
-        point_on_segment(
-            point,
-            polygon[index],
-            polygon[(index + 1) % polygon.len()],
-        )
-    })
+    (0..polygon.len())
+        .any(|index| point_on_segment(point, polygon[index], polygon[(index + 1) % polygon.len()]))
 }
 
 fn point_on_segment(point: Point2, start: Point2, end: Point2) -> bool {
@@ -502,10 +495,8 @@ fn push_distinct(points: &mut Vec<Point2>, point: Point2) {
 
 fn normalize_polygon(points: &mut Vec<Point2>) {
     if points.len() > 1
-        && squared_distance(
-            points[0],
-            *points.last().expect("non-empty polygon"),
-        ) <= EPSILON * EPSILON
+        && squared_distance(points[0], *points.last().expect("non-empty polygon"))
+            <= EPSILON * EPSILON
     {
         points.pop();
     }
@@ -576,10 +567,7 @@ mod tests {
             angle_radians: std::f32::consts::FRAC_PI_2,
         };
         let snapshot = model.render_snapshot(Some(fold)).unwrap();
-        assert!(snapshot
-            .vertices
-            .iter()
-            .any(|vertex| vertex[2].abs() > 0.5));
+        assert!(snapshot.vertices.iter().any(|vertex| vertex[2].abs() > 0.5));
         assert_eq!(snapshot.indices.len(), 12);
         assert_eq!(model.three_d_mesh(Some(fold)).unwrap().triangle_count(), 4);
     }
