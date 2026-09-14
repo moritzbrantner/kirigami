@@ -58,6 +58,9 @@ pub enum TopologyError {
     TooFewPathPoints,
     PolylineSelfIntersecting,
     PolylineLeavesFace,
+    PolylineLeavesTopology,
+    PolylineOverlapsBoundary,
+    PolylineCrossingAmbiguous,
     SegmentDoesNotSplitFace,
     SegmentLeavesFace,
     InvalidTopology,
@@ -86,6 +89,13 @@ impl fmt::Display for TopologyError {
             }
             Self::PolylineLeavesFace => formatter
                 .write_str("polyline must stay inside the selected face except at endpoints"),
+            Self::PolylineLeavesTopology => {
+                formatter.write_str("polyline leaves the current planar subdivision")
+            }
+            Self::PolylineOverlapsBoundary => formatter
+                .write_str("polyline must cross face boundaries instead of overlapping them"),
+            Self::PolylineCrossingAmbiguous => formatter
+                .write_str("polyline touches a face boundary without crossing into another face"),
             Self::SegmentDoesNotSplitFace => {
                 formatter.write_str("segment does not divide the face into two faces")
             }
@@ -765,6 +775,146 @@ impl PlanarTopology {
         Ok(new_face)
     }
 
+    /// Decomposes one simple open polyline into ordered fragments, one per traversed
+    /// face. Existing face-boundary intersections are inserted deterministically.
+    /// The topology is not mutated by this trace.
+    pub(super) fn trace_polyline_across_faces(
+        &self,
+        points: &[Point2],
+    ) -> Result<Vec<Vec<Point2>>, TopologyError> {
+        if points.len() < 2 {
+            return Err(TopologyError::TooFewPathPoints);
+        }
+        if points.iter().any(|point| !point.is_finite()) {
+            return Err(TopologyError::NonFinitePoint);
+        }
+        if points
+            .windows(2)
+            .any(|segment| squared_distance(segment[0], segment[1]) <= EPSILON * EPSILON)
+        {
+            return Err(TopologyError::DegenerateSegment);
+        }
+        if !polyline_is_simple(points) {
+            return Err(TopologyError::PolylineSelfIntersecting);
+        }
+        if !self.point_on_any_face_boundary(points[0])
+            || !self.point_on_any_face_boundary(*points.last().expect("path length checked"))
+        {
+            return Err(TopologyError::PointOffBoundary);
+        }
+
+        let final_position = (points.len() - 1) as f64;
+        let mut crossings = vec![
+            PathCrossing {
+                position: 0.0,
+                point: points[0],
+            },
+            PathCrossing {
+                position: final_position,
+                point: *points.last().expect("path length checked"),
+            },
+        ];
+
+        for (segment_index, segment) in points.windows(2).enumerate() {
+            for edge_index in 0..self.half_edges.len() {
+                let edge_id = HalfEdgeId(edge_index as u32);
+                let edge = self.edge(edge_id);
+                if edge.twin.is_some_and(|twin| twin.0 < edge_id.0) {
+                    continue;
+                }
+                let edge_start = self.vertex(edge.origin).point;
+                let edge_end = self.vertex(self.edge(edge.next).origin).point;
+                match segment_boundary_intersection(segment[0], segment[1], edge_start, edge_end) {
+                    BoundaryIntersection::None => {}
+                    BoundaryIntersection::Overlap => {
+                        return Err(TopologyError::PolylineOverlapsBoundary);
+                    }
+                    BoundaryIntersection::Point { t, point } => {
+                        let position = segment_index as f64 + f64::from(t);
+                        if position > PATH_POSITION_TOLERANCE
+                            && position < final_position - PATH_POSITION_TOLERANCE
+                        {
+                            crossings.push(PathCrossing { position, point });
+                        }
+                    }
+                }
+            }
+        }
+
+        crossings.sort_by(|left, right| {
+            left.position
+                .partial_cmp(&right.position)
+                .expect("finite path positions")
+        });
+        crossings.dedup_by(|right, left| {
+            (right.position - left.position).abs() <= PATH_POSITION_TOLERANCE
+                && approximately_equal(right.point, left.point)
+        });
+
+        let mut fragments = Vec::with_capacity(crossings.len().saturating_sub(1));
+        let mut previous_face = None;
+        for crossing_pair in crossings.windows(2) {
+            let fragment = polyline_slice(points, crossing_pair[0], crossing_pair[1]);
+            let face = self.face_containing_fragment(&fragment)?;
+            if previous_face == Some(face) {
+                return Err(TopologyError::PolylineCrossingAmbiguous);
+            }
+            previous_face = Some(face);
+            fragments.push(fragment);
+        }
+        if fragments.is_empty() {
+            return Err(TopologyError::SegmentDoesNotSplitFace);
+        }
+        Ok(fragments)
+    }
+
+    /// Resolves the face containing the interior of a traced path fragment. Callers
+    /// may use this after earlier fragments have already split the topology.
+    pub(super) fn face_containing_fragment(
+        &self,
+        points: &[Point2],
+    ) -> Result<FaceId, TopologyError> {
+        let probe = points
+            .windows(2)
+            .find(|segment| squared_distance(segment[0], segment[1]) > EPSILON * EPSILON)
+            .map(|segment| interpolate(segment[0], segment[1], 0.5))
+            .ok_or(TopologyError::DegenerateSegment)?;
+        self.face_containing_point_strict(probe)
+    }
+
+    fn face_containing_point_strict(&self, point: Point2) -> Result<FaceId, TopologyError> {
+        let mut found = None;
+        for face_index in 0..self.faces.len() {
+            let face = FaceId(face_index as u32);
+            let polygon = self.face_polygon(face)?;
+            if point_on_polygon_boundary(point, &polygon) {
+                continue;
+            }
+            if point_in_polygon(point, &polygon) {
+                if found.is_some() {
+                    return Err(TopologyError::InvalidTopology);
+                }
+                found = Some(face);
+            }
+        }
+        found.ok_or(TopologyError::PolylineLeavesTopology)
+    }
+
+    fn point_on_any_face_boundary(&self, point: Point2) -> bool {
+        self.half_edges
+            .iter()
+            .enumerate()
+            .any(|(edge_index, edge)| {
+                let edge_id = HalfEdgeId(edge_index as u32);
+                if edge.twin.is_some_and(|twin| twin.0 < edge_id.0) {
+                    return false;
+                }
+                let start = self.vertex(edge.origin).point;
+                let end = self.vertex(self.edge(edge.next).origin).point;
+                point_on_segment(point, start, end)
+            })
+    }
+
     fn boundary_arc_points(
         &self,
         start_edge: HalfEdgeId,
@@ -782,6 +932,95 @@ impl PlanarTopology {
         }
         Err(TopologyError::InvalidTopology)
     }
+}
+
+const PATH_POSITION_TOLERANCE: f64 = 1.0e-7;
+const PATH_PARAMETER_TOLERANCE: f32 = f32::EPSILON * 64.0;
+
+#[derive(Debug, Clone, Copy)]
+struct PathCrossing {
+    position: f64,
+    point: Point2,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum BoundaryIntersection {
+    None,
+    Point { t: f32, point: Point2 },
+    Overlap,
+}
+
+fn polyline_slice(points: &[Point2], start: PathCrossing, end: PathCrossing) -> Vec<Point2> {
+    let mut fragment = vec![start.point];
+    for (index, point) in points.iter().copied().enumerate().skip(1) {
+        let position = index as f64;
+        if position > start.position + PATH_POSITION_TOLERANCE
+            && position < end.position - PATH_POSITION_TOLERANCE
+            && !approximately_equal(*fragment.last().expect("fragment has start"), point)
+        {
+            fragment.push(point);
+        }
+    }
+    if !approximately_equal(*fragment.last().expect("fragment has start"), end.point) {
+        fragment.push(end.point);
+    }
+    fragment
+}
+
+fn segment_boundary_intersection(
+    start: Point2,
+    end: Point2,
+    edge_start: Point2,
+    edge_end: Point2,
+) -> BoundaryIntersection {
+    let rx = end.x - start.x;
+    let ry = end.y - start.y;
+    let sx = edge_end.x - edge_start.x;
+    let sy = edge_end.y - edge_start.y;
+    let qx = edge_start.x - start.x;
+    let qy = edge_start.y - start.y;
+    let denominator = cross_components(rx, ry, sx, sy);
+    let scale_squared = squared_distance(start, end).max(squared_distance(edge_start, edge_end));
+    let denominator_tolerance = scale_squared * f32::EPSILON * 32.0;
+
+    if denominator.abs() <= denominator_tolerance {
+        if !is_collinear(start, end, edge_start) || !is_collinear(start, end, edge_end) {
+            return BoundaryIntersection::None;
+        }
+        let length_squared = squared_distance(start, end);
+        let t0 = ((edge_start.x - start.x) * rx + (edge_start.y - start.y) * ry) / length_squared;
+        let t1 = ((edge_end.x - start.x) * rx + (edge_end.y - start.y) * ry) / length_squared;
+        let overlap_start = t0.min(t1).max(0.0);
+        let overlap_end = t0.max(t1).min(1.0);
+        if overlap_end < overlap_start - PATH_PARAMETER_TOLERANCE {
+            return BoundaryIntersection::None;
+        }
+        if overlap_end - overlap_start > PATH_PARAMETER_TOLERANCE {
+            return BoundaryIntersection::Overlap;
+        }
+        let t = ((overlap_start + overlap_end) * 0.5).clamp(0.0, 1.0);
+        return BoundaryIntersection::Point {
+            t,
+            point: interpolate(start, end, t),
+        };
+    }
+
+    let t = cross_components(qx, qy, sx, sy) / denominator;
+    let u = cross_components(qx, qy, rx, ry) / denominator;
+    if !(-PATH_PARAMETER_TOLERANCE..=1.0 + PATH_PARAMETER_TOLERANCE).contains(&t)
+        || !(-PATH_PARAMETER_TOLERANCE..=1.0 + PATH_PARAMETER_TOLERANCE).contains(&u)
+    {
+        return BoundaryIntersection::None;
+    }
+    let t = t.clamp(0.0, 1.0);
+    BoundaryIntersection::Point {
+        t,
+        point: interpolate(start, end, t),
+    }
+}
+
+fn cross_components(ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
+    ax * by - ay * bx
 }
 
 fn valid_face_loop(points: &[Point2]) -> bool {
@@ -1028,6 +1267,56 @@ mod tests {
             .unwrap();
         assert_eq!(topology.face_count(), 2);
         topology.validate().unwrap();
+    }
+
+    #[test]
+    fn traces_path_across_existing_faces() {
+        let mut topology = PlanarTopology::from_polygon(vec![
+            Point2::new(-1.0, -1.0),
+            Point2::new(1.0, -1.0),
+            Point2::new(1.0, 1.0),
+            Point2::new(-1.0, 1.0),
+        ])
+        .unwrap();
+        topology
+            .split_face_with_segment(FaceId(0), Point2::new(0.0, -1.0), Point2::new(0.0, 1.0))
+            .unwrap();
+
+        let fragments = topology
+            .trace_polyline_across_faces(&[Point2::new(-1.0, 0.0), Point2::new(1.0, 0.0)])
+            .unwrap();
+        assert_eq!(fragments.len(), 2);
+        assert!(approximately_equal(
+            *fragments[0].last().unwrap(),
+            Point2::new(0.0, 0.0)
+        ));
+        assert!(approximately_equal(fragments[1][0], Point2::new(0.0, 0.0)));
+        assert_ne!(
+            topology.face_containing_fragment(&fragments[0]).unwrap(),
+            topology.face_containing_fragment(&fragments[1]).unwrap()
+        );
+    }
+
+    #[test]
+    fn trace_rejects_boundary_overlap_without_mutation() {
+        let mut topology = PlanarTopology::from_polygon(vec![
+            Point2::new(-1.0, -1.0),
+            Point2::new(1.0, -1.0),
+            Point2::new(1.0, 1.0),
+            Point2::new(-1.0, 1.0),
+        ])
+        .unwrap();
+        topology
+            .split_face_with_segment(FaceId(0), Point2::new(0.0, -1.0), Point2::new(0.0, 1.0))
+            .unwrap();
+        let before = topology.clone();
+
+        assert_eq!(
+            topology
+                .trace_polyline_across_faces(&[Point2::new(0.0, -0.75), Point2::new(0.0, 0.75),]),
+            Err(TopologyError::PolylineOverlapsBoundary)
+        );
+        assert_eq!(topology, before);
     }
 
     #[test]
