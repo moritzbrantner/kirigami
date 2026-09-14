@@ -11,6 +11,8 @@ Interactive kirigami geometry and simulation for the web, with authoritative Rus
 
 The first topology primitive splits a convex panel with a straight boundary-to-boundary cut or crease. This is intentionally narrower than the long-term model: the public domain boundary is established first, then the implementation can move to half-edge planar subdivision and constrained triangulation without shifting authority into the UI or renderer.
 
+The PR validation workflow checks formatting, clippy, tests, and the WASM target at the exact proposed head before integration.
+
 ## Local validation
 
 ```sh
