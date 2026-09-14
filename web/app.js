@@ -35,7 +35,7 @@ function project([x, y, z]) {
 function render() {
   const currentMode = mode.value;
   const currentAngle = Number(angle.value);
-  angle.disabled = currentMode === "cut";
+  angle.disabled = currentMode !== "crease";
   angleOutput.value = `${currentAngle}°`;
 
   const snapshot = JSON.parse(demo_snapshot(currentAngle, currentMode));
