@@ -22,6 +22,7 @@
 - Closed cuts that create detached inner panels plus authoritative outer/inner face boundary loops.
 - Multiple disjoint or nested hole loops with deterministic hole-aware rendering triangulation.
 - Boundary-bridge cuts that connect outer-to-hole or hole-to-hole components without inventing a new panel.
+- BVH-pruned, GJK-tested advisory self-intersection reports for non-neighbor panel pairs, with indeterminate pairs surfaced fail-closed.
 - Cuts that split connected components.
 - Creases that preserve connectivity.
 - Deterministic rigid rotation around a crease axis.
@@ -30,7 +31,7 @@
 
 ## Next vertical slices
 
-1. Integrate the collision foundation for BVH-backed paper self-intersection queries; keep collision detection advisory to `kirigami-core` validity until the boundary is proven.
+1. Extend collision validation from non-neighbor panels to adjacent-panel penetration while distinguishing intentional shared-boundary contact from overlap.
 2. Upgrade rendering/physics triangulation to constrained Delaunay when mesh quality requires it; the authoritative boundary graph remains independent of the triangulator.
 3. Add multi-crease fold state and constraint propagation so genuinely bent creases have an authoritative solver. Use the physics engine only for material/mechanical behavior, never as the authority for crease meaning.
 4. Add first-party 3D rendering through the shared `3d-lab` renderer seam while retaining the lightweight Canvas renderer as a deterministic fallback/acceptance surface.
@@ -41,7 +42,7 @@
 
 ## Algorithm priorities
 
-Closed-path/hole arrangement, multiple boundary loops, and boundary bridges are now part of the deterministic topology foundation. Hole-aware rendering uses Earcut as a replaceable consumer of authoritative boundary geometry; the next algorithm work is BVH/self-intersection, then constrained triangulation and multi-crease constraint solving.
+Closed-path/hole arrangement, multiple boundary loops, and boundary bridges are part of the deterministic topology foundation. Self-intersection now reuses the pinned `rust-kernels` static BVH for deterministic candidate pruning and generic GJK convex-hull queries for triangle tests; the first accepted scope intentionally excludes topological neighbor panels. The next algorithm work is contact-aware adjacent-panel validation, constrained triangulation, and multi-crease constraint solving.
 
 
 ## 3D target approximation
