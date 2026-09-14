@@ -168,6 +168,7 @@ pub enum ModelError {
     SeamReattachmentFailed(SeamId),
     Topology(TopologyError),
     TooManyRenderVertices,
+    TooManyCollisionTriangles,
 }
 
 impl fmt::Display for ModelError {
@@ -205,6 +206,9 @@ impl fmt::Display for ModelError {
             Self::Topology(error) => write!(formatter, "topology error: {error}"),
             Self::TooManyRenderVertices => {
                 formatter.write_str("render snapshot exceeds u32 index capacity")
+            }
+            Self::TooManyCollisionTriangles => {
+                formatter.write_str("collision query exceeds u32 triangle-ID capacity")
             }
         }
     }
@@ -616,7 +620,7 @@ impl PaperModel {
         fold: Option<FoldRequest>,
     ) -> Result<SelfIntersectionReport, ModelError> {
         let snapshot = self.render_snapshot(fold)?;
-        Ok(analyze_self_intersections(&snapshot, &self.seams))
+        analyze_self_intersections(&snapshot, &self.seams)
     }
 
     pub fn three_d_mesh(&self, fold: Option<FoldRequest>) -> Result<Mesh, MeshBuildError> {
@@ -797,7 +801,10 @@ impl ResolvedFold {
     }
 }
 
-fn analyze_self_intersections(snapshot: &RenderSnapshot, seams: &[Seam]) -> SelfIntersectionReport {
+fn analyze_self_intersections(
+    snapshot: &RenderSnapshot,
+    seams: &[Seam],
+) -> Result<SelfIntersectionReport, ModelError> {
     debug_assert_eq!(snapshot.indices.len() / 3, snapshot.triangle_panels.len());
     let triangle_count = snapshot.triangle_panels.len();
     let mut bodies = Vec::with_capacity(triangle_count);
@@ -815,7 +822,10 @@ fn analyze_self_intersections(snapshot: &RenderSnapshot, seams: &[Seam]) -> Self
                 .map(|vertex| vertex[axis])
                 .fold(f32::NEG_INFINITY, f32::max)
         });
-        bodies.push(Body::new(triangle_index as u32, Aabb::new(min, max)));
+        bodies.push(Body::new(
+            collision_triangle_id(triangle_index)?,
+            Aabb::new(min, max),
+        ));
     }
 
     let neighbors: HashSet<(PanelId, PanelId)> = seams
@@ -863,14 +873,18 @@ fn analyze_self_intersections(snapshot: &RenderSnapshot, seams: &[Seam]) -> Self
         }
     }
 
-    SelfIntersectionReport {
+    Ok(SelfIntersectionReport {
         scope: SelfIntersectionScope::NonNeighborPanels,
         triangle_count,
         broad_phase_candidates,
         narrow_phase_tests,
         indeterminate_pairs,
         intersections,
-    }
+    })
+}
+
+fn collision_triangle_id(index: usize) -> Result<u32, ModelError> {
+    u32::try_from(index).map_err(|_| ModelError::TooManyCollisionTriangles)
 }
 
 fn triangle_vertices(snapshot: &RenderSnapshot, triangle_index: usize) -> [[f32; 3]; 3] {
@@ -1438,7 +1452,7 @@ mod tests {
             panel_count: 2,
             component_count: 2,
         };
-        let report = analyze_self_intersections(&snapshot, &[]);
+        let report = analyze_self_intersections(&snapshot, &[]).unwrap();
         assert_eq!(report.triangle_count, 2);
         assert_eq!(report.narrow_phase_tests, 1);
         assert_eq!(report.intersections.len(), 1);
@@ -1472,9 +1486,17 @@ mod tests {
             panel_a: PanelId(0),
             panel_b: PanelId(1),
         };
-        let report = analyze_self_intersections(&snapshot, &[neighbor]);
+        let report = analyze_self_intersections(&snapshot, &[neighbor]).unwrap();
         assert!(report.is_proven_clear());
         assert_eq!(report.narrow_phase_tests, 0);
+    }
+
+    #[test]
+    fn collision_triangle_ids_fail_closed_before_truncation() {
+        assert_eq!(
+            collision_triangle_id(u32::MAX as usize + 1),
+            Err(ModelError::TooManyCollisionTriangles)
+        );
     }
 
     #[test]
