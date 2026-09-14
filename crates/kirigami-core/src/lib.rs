@@ -58,8 +58,7 @@ pub struct Panel {
 pub struct Operation {
     pub id: OperationId,
     pub kind: OperationKind,
-    pub start: Point2,
-    pub end: Point2,
+    pub path: Vec<Point2>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -112,6 +111,8 @@ pub enum ModelError {
     InvalidSheetDimensions,
     NonFinitePoint,
     DegenerateSegment,
+    InvalidPath,
+    BentCreaseRequiresConstraintSolver,
     UnknownPanel(PanelId),
     UnknownOperation(OperationId),
     SegmentEndpointOffBoundary,
@@ -133,6 +134,9 @@ impl fmt::Display for ModelError {
                 formatter.write_str("segment points must contain only finite coordinates")
             }
             Self::DegenerateSegment => formatter.write_str("segment endpoints must be distinct"),
+            Self::InvalidPath => formatter.write_str("a path requires at least two finite points"),
+            Self::BentCreaseRequiresConstraintSolver => formatter
+                .write_str("a non-straight crease requires the multi-crease constraint solver"),
             Self::UnknownPanel(panel) => write!(formatter, "unknown panel {}", panel.0),
             Self::UnknownOperation(operation) => {
                 write!(formatter, "unknown operation {}", operation.0)
@@ -244,10 +248,6 @@ impl PaperModel {
     }
 
     /// Splits a panel using a straight boundary-to-boundary segment.
-    ///
-    /// The geometric subdivision is owned by `PlanarTopology`. A logical operation can
-    /// own multiple seam segments after later panel splits, so topology can evolve
-    /// without changing the identity of an existing cut or crease.
     pub fn split_panel_with_segment(
         &mut self,
         panel_id: PanelId,
@@ -255,10 +255,39 @@ impl PaperModel {
         end: Point2,
         kind: OperationKind,
     ) -> Result<OperationId, ModelError> {
-        if !start.is_finite() || !end.is_finite() {
-            return Err(ModelError::NonFinitePoint);
+        self.split_panel_with_path(panel_id, &[start, end], kind)
+    }
+
+    /// Splits a panel along an open polyline. Bent paths are currently supported for
+    /// cuts; creases must remain straight until the constraint solver owns non-rigid folds.
+    pub fn split_panel_with_polyline(
+        &mut self,
+        panel_id: PanelId,
+        path: &[Point2],
+        kind: OperationKind,
+    ) -> Result<OperationId, ModelError> {
+        if path.len() < 2 || path.iter().any(|point| !point.is_finite()) {
+            return Err(ModelError::InvalidPath);
         }
-        if squared_distance(start, end) <= EPSILON * EPSILON {
+        if kind == OperationKind::Crease && !path_is_straight(path) {
+            return Err(ModelError::BentCreaseRequiresConstraintSolver);
+        }
+        self.split_panel_with_path(panel_id, path, kind)
+    }
+
+    fn split_panel_with_path(
+        &mut self,
+        panel_id: PanelId,
+        path: &[Point2],
+        kind: OperationKind,
+    ) -> Result<OperationId, ModelError> {
+        if path.len() < 2 || path.iter().any(|point| !point.is_finite()) {
+            return Err(ModelError::InvalidPath);
+        }
+        if path
+            .windows(2)
+            .any(|segment| squared_distance(segment[0], segment[1]) <= EPSILON * EPSILON)
+        {
             return Err(ModelError::DegenerateSegment);
         }
         let panel_index = self
@@ -267,19 +296,25 @@ impl PaperModel {
             .position(|panel| panel.id == panel_id)
             .ok_or(ModelError::UnknownPanel(panel_id))?;
         let original_face = self.panels[panel_index].face;
+        let start = path[0];
+        let end = *path.last().expect("path length checked");
 
-        // Keep edits fail-closed: geometric subdivision and seam reassignment are
-        // prepared against a candidate topology and committed only if both succeed.
         let mut candidate_topology = self.topology.clone();
-        let new_face = candidate_topology
-            .split_face_with_segment(original_face, start, end)
-            .map_err(map_split_error)?;
+        let new_face = if path.len() == 2 {
+            candidate_topology
+                .split_face_with_segment(original_face, start, end)
+                .map_err(map_split_error)?
+        } else {
+            candidate_topology
+                .split_face_with_polyline(original_face, path)
+                .map_err(map_split_error)?
+        };
         let a_polygon = candidate_topology.face_polygon(original_face)?;
         let b_polygon = candidate_topology.face_polygon(new_face)?;
 
         let original_id = self.panels[panel_index].id;
         let new_id = PanelId(self.next_panel_id);
-        let (reattached_seams, next_seam_id) = self.reattached_seams_after_split(
+        let (reattached_seams, mut next_seam_id) = self.reattached_seams_after_split(
             original_id,
             new_id,
             start,
@@ -289,31 +324,35 @@ impl PaperModel {
         )?;
 
         let operation_id = OperationId(self.next_operation_id);
-        let seam_id = SeamId(next_seam_id);
+        let mut new_seams = Vec::with_capacity(path.len() - 1);
+        for segment in path.windows(2) {
+            new_seams.push(Seam {
+                id: SeamId(next_seam_id),
+                operation: operation_id,
+                kind,
+                start: segment[0],
+                end: segment[1],
+                panel_a: original_id,
+                panel_b: new_id,
+            });
+            next_seam_id += 1;
+        }
+
         self.topology = candidate_topology;
         self.panels.push(Panel {
             id: new_id,
             face: new_face,
         });
         self.seams = reattached_seams;
-        self.seams.push(Seam {
-            id: seam_id,
-            operation: operation_id,
-            kind,
-            start,
-            end,
-            panel_a: original_id,
-            panel_b: new_id,
-        });
+        self.seams.extend(new_seams);
         self.operations.push(Operation {
             id: operation_id,
             kind,
-            start,
-            end,
+            path: path.to_vec(),
         });
         self.next_panel_id += 1;
         self.next_operation_id += 1;
-        self.next_seam_id = next_seam_id + 1;
+        self.next_seam_id = next_seam_id;
         Ok(operation_id)
     }
 
@@ -407,6 +446,11 @@ impl PaperModel {
         if operation.kind == OperationKind::Cut {
             return Err(ModelError::CannotFoldCut(request.operation));
         }
+        if !path_is_straight(&operation.path) {
+            return Err(ModelError::BentCreaseRequiresConstraintSolver);
+        }
+        let axis_start = operation.path[0];
+        let axis_end = *operation.path.last().expect("operation path validated");
 
         let moving_seeds: HashSet<PanelId> = self
             .seams
@@ -417,8 +461,8 @@ impl PaperModel {
         let moving_panels = self.connected_panels_without_operation(&moving_seeds, operation.id);
         Ok(ResolvedFold {
             operation: operation.id,
-            axis_start: Vec3::new(operation.start.x, operation.start.y, 0.0),
-            axis_end: Vec3::new(operation.end.x, operation.end.y, 0.0),
+            axis_start: Vec3::new(axis_start.x, axis_start.y, 0.0),
+            axis_end: Vec3::new(axis_end.x, axis_end.y, 0.0),
             angle_radians: request.angle_radians,
             moving_panels,
         })
@@ -538,11 +582,32 @@ fn map_split_error(error: TopologyError) -> ModelError {
     match error {
         TopologyError::PointOffBoundary => ModelError::SegmentEndpointOffBoundary,
         TopologyError::DegenerateSegment => ModelError::DegenerateSegment,
-        TopologyError::SegmentDoesNotSplitFace | TopologyError::SegmentLeavesFace => {
-            ModelError::SegmentDoesNotSplitPanel
-        }
+        TopologyError::TooFewPathPoints => ModelError::InvalidPath,
+        TopologyError::PolylineSelfIntersecting
+        | TopologyError::PolylineLeavesFace
+        | TopologyError::SegmentDoesNotSplitFace
+        | TopologyError::SegmentLeavesFace => ModelError::SegmentDoesNotSplitPanel,
         other => ModelError::Topology(other),
     }
+}
+
+fn path_is_straight(path: &[Point2]) -> bool {
+    if path.len() < 2 {
+        return false;
+    }
+    let start = path[0];
+    let end = *path.last().expect("path length checked");
+    let axis_x = end.x - start.x;
+    let axis_y = end.y - start.y;
+    let axis_length_squared = axis_x * axis_x + axis_y * axis_y;
+    if axis_length_squared <= EPSILON * EPSILON {
+        return false;
+    }
+    let axis_length = axis_length_squared.sqrt();
+    path[1..path.len() - 1].iter().all(|point| {
+        let cross = axis_x * (point.y - start.y) - axis_y * (point.x - start.x);
+        cross.abs() <= EPSILON * axis_length
+    })
 }
 
 fn adjacent_panel(seam: &Seam, panel: PanelId) -> Option<PanelId> {
@@ -790,6 +855,85 @@ mod tests {
             }))
             .unwrap();
         assert!(snapshot.vertices.iter().any(|vertex| vertex[2].abs() > 0.5));
+    }
+
+    #[test]
+    fn bent_cut_creates_segmented_operation_and_disconnects() {
+        let mut model = PaperModel::rectangle(2.0, 1.0).unwrap();
+        let operation = model
+            .split_panel_with_polyline(
+                PanelId(0),
+                &[
+                    Point2::new(-1.0, 0.0),
+                    Point2::new(0.0, 0.25),
+                    Point2::new(1.0, 0.0),
+                ],
+                OperationKind::Cut,
+            )
+            .unwrap();
+
+        assert_eq!(model.panels().len(), 2);
+        assert_eq!(model.component_count(), 2);
+        assert_eq!(
+            model
+                .seams()
+                .iter()
+                .filter(|seam| seam.operation == operation)
+                .count(),
+            2
+        );
+        assert_eq!(model.operations()[0].path.len(), 3);
+        model.topology().validate().unwrap();
+    }
+
+    #[test]
+    fn bent_crease_is_deferred_without_mutation() {
+        let mut model = PaperModel::rectangle(2.0, 1.0).unwrap();
+        let before = model.clone();
+        assert_eq!(
+            model.split_panel_with_polyline(
+                PanelId(0),
+                &[
+                    Point2::new(-1.0, 0.0),
+                    Point2::new(0.0, 0.25),
+                    Point2::new(1.0, 0.0),
+                ],
+                OperationKind::Crease,
+            ),
+            Err(ModelError::BentCreaseRequiresConstraintSolver)
+        );
+        assert_eq!(model, before);
+    }
+
+    #[test]
+    fn collinear_segmented_crease_still_uses_rigid_fold_axis() {
+        let mut model = PaperModel::rectangle(2.0, 1.0).unwrap();
+        let crease = model
+            .split_panel_with_polyline(
+                PanelId(0),
+                &[
+                    Point2::new(0.0, -0.5),
+                    Point2::new(0.0, 0.0),
+                    Point2::new(0.0, 0.5),
+                ],
+                OperationKind::Crease,
+            )
+            .unwrap();
+        let snapshot = model
+            .render_snapshot(Some(FoldRequest {
+                operation: crease,
+                angle_radians: std::f32::consts::FRAC_PI_2,
+            }))
+            .unwrap();
+        assert!(snapshot.vertices.iter().any(|vertex| vertex[2].abs() > 0.5));
+        assert_eq!(
+            model
+                .seams()
+                .iter()
+                .filter(|seam| seam.operation == crease)
+                .count(),
+            2
+        );
     }
 
     #[test]

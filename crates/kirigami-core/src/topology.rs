@@ -55,6 +55,9 @@ pub enum TopologyError {
     UnknownFace(FaceId),
     PointOffBoundary,
     DegenerateSegment,
+    TooFewPathPoints,
+    PolylineSelfIntersecting,
+    PolylineLeavesFace,
     SegmentDoesNotSplitFace,
     SegmentLeavesFace,
     InvalidTopology,
@@ -77,6 +80,12 @@ impl fmt::Display for TopologyError {
             Self::UnknownFace(face) => write!(formatter, "unknown face {}", face.0),
             Self::PointOffBoundary => formatter.write_str("point is not on the face boundary"),
             Self::DegenerateSegment => formatter.write_str("segment endpoints must be distinct"),
+            Self::TooFewPathPoints => formatter.write_str("a path requires at least two points"),
+            Self::PolylineSelfIntersecting => {
+                formatter.write_str("polyline must not self-intersect")
+            }
+            Self::PolylineLeavesFace => formatter
+                .write_str("polyline must stay inside the selected face except at endpoints"),
             Self::SegmentDoesNotSplitFace => {
                 formatter.write_str("segment does not divide the face into two faces")
             }
@@ -599,6 +608,207 @@ impl PlanarTopology {
     }
 }
 
+impl PlanarTopology {
+    /// Splits one face along an open polyline whose endpoints lie on the face boundary.
+    /// Internal path points must stay strictly inside the face. The edit is transactional.
+    pub fn split_face_with_polyline(
+        &mut self,
+        face: FaceId,
+        points: &[Point2],
+    ) -> Result<FaceId, TopologyError> {
+        if points.len() == 2 {
+            return self.split_face_with_segment(face, points[0], points[1]);
+        }
+        let mut candidate = self.clone();
+        let new_face = candidate.split_face_with_polyline_in_place(face, points)?;
+        *self = candidate;
+        Ok(new_face)
+    }
+
+    fn split_face_with_polyline_in_place(
+        &mut self,
+        face: FaceId,
+        points: &[Point2],
+    ) -> Result<FaceId, TopologyError> {
+        if points.len() < 2 {
+            return Err(TopologyError::TooFewPathPoints);
+        }
+        if points.iter().any(|point| !point.is_finite()) {
+            return Err(TopologyError::NonFinitePoint);
+        }
+        if points
+            .windows(2)
+            .any(|segment| squared_distance(segment[0], segment[1]) <= EPSILON * EPSILON)
+        {
+            return Err(TopologyError::DegenerateSegment);
+        }
+        if !polyline_is_simple(points) {
+            return Err(TopologyError::PolylineSelfIntersecting);
+        }
+        self.face(face)?;
+
+        let polygon = self.face_polygon(face)?;
+        let start = points[0];
+        let end = *points.last().expect("path length checked");
+        if !point_on_polygon_boundary(start, &polygon) || !point_on_polygon_boundary(end, &polygon)
+        {
+            return Err(TopologyError::PointOffBoundary);
+        }
+        if points[1..points.len() - 1].iter().any(|point| {
+            point_on_polygon_boundary(*point, &polygon) || !point_in_polygon(*point, &polygon)
+        }) {
+            return Err(TopologyError::PolylineLeavesFace);
+        }
+
+        let start_vertex = self.locate_or_insert_boundary_vertex(face, start)?;
+        let end_vertex = self.locate_or_insert_boundary_vertex(face, end)?;
+        if start_vertex == end_vertex {
+            return Err(TopologyError::DegenerateSegment);
+        }
+
+        let boundary = self.face_half_edges(face)?;
+        let start_out = boundary
+            .iter()
+            .copied()
+            .find(|edge| self.edge(*edge).origin == start_vertex)
+            .ok_or(TopologyError::InvalidTopology)?;
+        let end_out = boundary
+            .iter()
+            .copied()
+            .find(|edge| self.edge(*edge).origin == end_vertex)
+            .ok_or(TopologyError::InvalidTopology)?;
+
+        let start_to_end_arc = self.boundary_arc_points(start_out, end_vertex)?;
+        let end_to_start_arc = self.boundary_arc_points(end_out, start_vertex)?;
+        let mut old_loop = start_to_end_arc;
+        old_loop.extend(points[1..points.len() - 1].iter().rev().copied());
+        let mut new_loop = end_to_start_arc;
+        new_loop.extend(points[1..points.len() - 1].iter().copied());
+        if !valid_face_loop(&old_loop) || !valid_face_loop(&new_loop) {
+            return Err(TopologyError::PolylineLeavesFace);
+        }
+
+        let start_prev = self.edge(start_out).prev;
+        let end_prev = self.edge(end_out).prev;
+        let new_face =
+            FaceId(u32::try_from(self.faces.len()).map_err(|_| TopologyError::TooManyVertices)?);
+        let segment_count = points.len() - 1;
+        let edge_base = self.half_edges.len();
+        let mut forward = Vec::with_capacity(segment_count);
+        let mut reverse = Vec::with_capacity(segment_count);
+        for index in 0..segment_count {
+            forward.push(HalfEdgeId(
+                u32::try_from(edge_base + index * 2).map_err(|_| TopologyError::TooManyVertices)?,
+            ));
+            reverse.push(HalfEdgeId(
+                u32::try_from(edge_base + index * 2 + 1)
+                    .map_err(|_| TopologyError::TooManyVertices)?,
+            ));
+        }
+
+        let mut path_vertices = Vec::with_capacity(points.len());
+        path_vertices.push(start_vertex);
+        for (internal_index, point) in points[1..points.len() - 1].iter().copied().enumerate() {
+            let vertex = VertexId(
+                u32::try_from(self.vertices.len()).map_err(|_| TopologyError::TooManyVertices)?,
+            );
+            self.vertices.push(TopologyVertex {
+                point,
+                outgoing: Some(forward[internal_index + 1]),
+            });
+            path_vertices.push(vertex);
+        }
+        path_vertices.push(end_vertex);
+
+        self.faces.push(Face { boundary: end_out });
+        for index in 0..segment_count {
+            self.half_edges.push(HalfEdge {
+                origin: path_vertices[index],
+                twin: Some(reverse[index]),
+                next: if index + 1 < segment_count {
+                    forward[index + 1]
+                } else {
+                    end_out
+                },
+                prev: if index == 0 {
+                    start_prev
+                } else {
+                    forward[index - 1]
+                },
+                face: new_face,
+            });
+            self.half_edges.push(HalfEdge {
+                origin: path_vertices[index + 1],
+                twin: Some(forward[index]),
+                next: if index == 0 {
+                    start_out
+                } else {
+                    reverse[index - 1]
+                },
+                prev: if index + 1 == segment_count {
+                    end_prev
+                } else {
+                    reverse[index + 1]
+                },
+                face,
+            });
+        }
+
+        self.edge_mut(start_prev).next = forward[0];
+        self.edge_mut(end_out).prev = *forward.last().expect("non-empty path");
+        self.edge_mut(end_prev).next = *reverse.last().expect("non-empty path");
+        self.edge_mut(start_out).prev = reverse[0];
+        self.face_mut(face).boundary = start_out;
+        self.assign_face_cycle(start_out, face)?;
+        self.assign_face_cycle(end_out, new_face)?;
+        self.validate()?;
+        Ok(new_face)
+    }
+
+    fn boundary_arc_points(
+        &self,
+        start_edge: HalfEdgeId,
+        end_vertex: VertexId,
+    ) -> Result<Vec<Point2>, TopologyError> {
+        let mut points = vec![self.vertex(self.edge(start_edge).origin).point];
+        let mut current = start_edge;
+        for _ in 0..=self.half_edges.len() {
+            current = self.edge(current).next;
+            let vertex = self.edge(current).origin;
+            points.push(self.vertex(vertex).point);
+            if vertex == end_vertex {
+                return Ok(points);
+            }
+        }
+        Err(TopologyError::InvalidTopology)
+    }
+}
+
+fn valid_face_loop(points: &[Point2]) -> bool {
+    points.len() >= 3
+        && !points
+            .windows(2)
+            .any(|pair| approximately_equal(pair[0], pair[1]))
+        && is_simple_polygon(points)
+        && signed_area(points).abs() > polygon_area_tolerance(points)
+}
+
+fn polyline_is_simple(points: &[Point2]) -> bool {
+    for first in 0..points.len() - 1 {
+        for second in (first + 2)..points.len() - 1 {
+            if segments_intersect(
+                points[first],
+                points[first + 1],
+                points[second],
+                points[second + 1],
+            ) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 fn signed_area(points: &[Point2]) -> f32 {
     let mut twice_area = 0.0;
     for index in 0..points.len() {
@@ -818,6 +1028,82 @@ mod tests {
             .unwrap();
         assert_eq!(topology.face_count(), 2);
         topology.validate().unwrap();
+    }
+
+    #[test]
+    fn polyline_split_creates_half_edge_chain() {
+        let mut topology = PlanarTopology::from_polygon(vec![
+            Point2::new(-1.0, -1.0),
+            Point2::new(1.0, -1.0),
+            Point2::new(1.0, 1.0),
+            Point2::new(-1.0, 1.0),
+        ])
+        .unwrap();
+        let second = topology
+            .split_face_with_polyline(
+                FaceId(0),
+                &[
+                    Point2::new(-1.0, 0.0),
+                    Point2::new(0.0, 0.4),
+                    Point2::new(1.0, 0.0),
+                ],
+            )
+            .unwrap();
+
+        assert_eq!(second, FaceId(1));
+        assert_eq!(topology.face_count(), 2);
+        topology.validate().unwrap();
+        assert!(topology.triangulate_face(FaceId(0)).is_ok());
+        assert!(topology.triangulate_face(FaceId(1)).is_ok());
+    }
+
+    #[test]
+    fn polyline_split_is_fail_closed_when_path_leaves_face() {
+        let mut topology = PlanarTopology::from_polygon(vec![
+            Point2::new(-1.0, -1.0),
+            Point2::new(1.0, -1.0),
+            Point2::new(1.0, 1.0),
+            Point2::new(-1.0, 1.0),
+        ])
+        .unwrap();
+        let before = topology.clone();
+        assert_eq!(
+            topology.split_face_with_polyline(
+                FaceId(0),
+                &[
+                    Point2::new(-1.0, 0.0),
+                    Point2::new(0.0, 1.5),
+                    Point2::new(1.0, 0.0),
+                ],
+            ),
+            Err(TopologyError::PolylineLeavesFace)
+        );
+        assert_eq!(topology, before);
+    }
+
+    #[test]
+    fn rejects_self_intersecting_polyline_without_mutation() {
+        let mut topology = PlanarTopology::from_polygon(vec![
+            Point2::new(-2.0, -2.0),
+            Point2::new(2.0, -2.0),
+            Point2::new(2.0, 2.0),
+            Point2::new(-2.0, 2.0),
+        ])
+        .unwrap();
+        let before = topology.clone();
+        assert_eq!(
+            topology.split_face_with_polyline(
+                FaceId(0),
+                &[
+                    Point2::new(-2.0, 0.0),
+                    Point2::new(1.0, 1.0),
+                    Point2::new(-1.0, 1.0),
+                    Point2::new(2.0, 0.0),
+                ],
+            ),
+            Err(TopologyError::PolylineSelfIntersecting)
+        );
+        assert_eq!(topology, before);
     }
 
     #[test]
