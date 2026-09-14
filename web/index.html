@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Interactive kirigami geometry powered by Rust and WebAssembly." />
+  <title>Kirigami Lab</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <main>
+    <header>
+      <p class="eyebrow">Rust / WebAssembly geometry lab</p>
+      <h1>Kirigami</h1>
+      <p class="lede">Explore the difference between a crease that preserves connectivity and a cut that changes paper topology.</p>
+    </header>
+
+    <section class="controls" aria-label="Kirigami controls">
+      <label>
+        Operation
+        <select id="mode">
+          <option value="crease">Crease</option>
+          <option value="cut">Cut</option>
+        </select>
+      </label>
+      <label class="angle-control">
+        Fold angle <output id="angle-output" for="angle">65°</output>
+        <input id="angle" type="range" min="0" max="150" value="65" step="1" />
+      </label>
+      <p id="status" class="status" aria-live="polite"></p>
+    </section>
+
+    <section class="viewport" aria-label="Interactive paper preview">
+      <canvas id="canvas"></canvas>
+    </section>
+
+    <section class="architecture">
+      <h2>What this proves</h2>
+      <p><code>kirigami-core</code> owns cuts, creases, connectivity, and fold transforms. The browser receives an immutable render snapshot; it does not decide what a valid paper operation means.</p>
+    </section>
+  </main>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
