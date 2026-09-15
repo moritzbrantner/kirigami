@@ -19,7 +19,9 @@ jobs:
         with:
           components: rustfmt, clippy
       - name: Apply fix
-        run: python3 scripts/filter_shared_vertex_contacts.py
+        run: |
+          python3 scripts/filter_shared_vertex_contacts.py
+          python3 scripts/remove_stale_neighbor_filter.py
       - name: Format
         run: cargo fmt --all
       - name: Lint
