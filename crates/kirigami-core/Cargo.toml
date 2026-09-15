@@ -6,6 +6,9 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+bvh-kernels.workspace = true
 earcut.workspace = true
+geometry-kernels.workspace = true
 serde.workspace = true
+spatial-kernels.workspace = true
 three-d-core.workspace = true

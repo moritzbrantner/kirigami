@@ -15,6 +15,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
 
 [[package]]
+name = "bvh-kernels"
+version = "0.1.0"
+source = "git+https://github.com/moritzbrantner/rust-kernels?rev=980091094a9826167a98b96781126595fbea5076#980091094a9826167a98b96781126595fbea5076"
+dependencies = [
+ "spatial-kernels",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -30,6 +38,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "geometry-kernels"
+version = "0.1.0"
+source = "git+https://github.com/moritzbrantner/rust-kernels?rev=980091094a9826167a98b96781126595fbea5076#980091094a9826167a98b96781126595fbea5076"
+dependencies = [
+ "spatial-kernels",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -39,8 +55,11 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 name = "kirigami-core"
 version = "0.1.0"
 dependencies = [
+ "bvh-kernels",
  "earcut",
+ "geometry-kernels",
  "serde",
+ "spatial-kernels",
  "three-d-core",
 ]
 
@@ -140,6 +159,11 @@ dependencies = [
  "serde_core",
  "zmij",
 ]
+
+[[package]]
+name = "spatial-kernels"
+version = "0.1.0"
+source = "git+https://github.com/moritzbrantner/rust-kernels?rev=980091094a9826167a98b96781126595fbea5076#980091094a9826167a98b96781126595fbea5076"
 
 [[package]]
 name = "syn"
