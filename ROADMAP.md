@@ -22,7 +22,7 @@
 - Closed cuts that create detached inner panels plus authoritative outer/inner face boundary loops.
 - Multiple disjoint or nested hole loops with deterministic hole-aware rendering triangulation.
 - Boundary-bridge cuts that connect outer-to-hole or hole-to-hole components without inventing a new panel.
-- BVH-pruned, GJK-tested advisory self-intersection reports for non-neighbor panel pairs, with indeterminate pairs surfaced fail-closed.
+- BVH-pruned, GJK-tested advisory self-intersection reports for non-contacting panel pairs, excluding direct seam neighbors and shared-topology-vertex contact; indeterminate pairs surface fail-closed.
 - Cuts that split connected components.
 - Creases that preserve connectivity.
 - Deterministic rigid rotation around a crease axis.
@@ -42,7 +42,7 @@
 
 ## Algorithm priorities
 
-Closed-path/hole arrangement, multiple boundary loops, and boundary bridges are part of the deterministic topology foundation. Self-intersection now reuses the pinned `rust-kernels` static BVH for deterministic candidate pruning and generic GJK convex-hull queries for triangle tests; the first accepted scope intentionally excludes topological neighbor panels. The next algorithm work is contact-aware adjacent-panel validation, constrained triangulation, and multi-crease constraint solving.
+Closed-path/hole arrangement, multiple boundary loops, and boundary bridges are part of the deterministic topology foundation. Self-intersection now reuses the pinned `rust-kernels` static BVH for deterministic candidate pruning and generic GJK convex-hull queries for triangle tests; the first accepted scope intentionally excludes direct seam neighbors and shared-topology-vertex contact. The next algorithm work is contact-aware adjacent-panel validation, constrained triangulation, and multi-crease constraint solving.
 
 
 ## 3D target approximation

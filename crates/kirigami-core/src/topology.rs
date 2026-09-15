@@ -203,6 +203,16 @@ impl PlanarTopology {
         Ok(face.holes.len() + 1)
     }
 
+    /// Returns whether two faces intentionally meet at at least one authoritative
+    /// topology vertex, including vertices on hole or bridge boundary walks.
+    pub fn faces_share_vertex(&self, left: FaceId, right: FaceId) -> Result<bool, TopologyError> {
+        let left_vertices = self.face_vertex_ids(left)?;
+        let right_vertices = self.face_vertex_ids(right)?;
+        Ok(left_vertices
+            .iter()
+            .any(|vertex| right_vertices.contains(vertex)))
+    }
+
     pub fn face_polygon(&self, face: FaceId) -> Result<Vec<Point2>, TopologyError> {
         self.cycle_polygon(self.face(face)?.outer, face)
     }
@@ -1056,6 +1066,19 @@ impl PlanarTopology {
             }
         }
         Err(TopologyError::InvalidTopology)
+    }
+
+    fn face_vertex_ids(&self, face: FaceId) -> Result<Vec<VertexId>, TopologyError> {
+        let mut vertices = Vec::new();
+        for boundary in self.face_boundary_half_edges(face)? {
+            for edge_id in boundary {
+                let vertex = self.edge(edge_id).origin;
+                if !vertices.contains(&vertex) {
+                    vertices.push(vertex);
+                }
+            }
+        }
+        Ok(vertices)
     }
 
     fn face_half_edges(&self, face: FaceId) -> Result<Vec<HalfEdgeId>, TopologyError> {

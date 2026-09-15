@@ -120,9 +120,9 @@ pub struct RenderSnapshot {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SelfIntersectionScope {
-    /// Tests only panel pairs that do not already share any cut or crease seam.
-    /// This avoids reporting intended hinge/cut-boundary contact as penetration.
-    NonNeighborPanels,
+    /// Tests only panel pairs with no intentional topological contact. Direct seam
+    /// neighbors and panels sharing only a topology vertex are excluded.
+    NonContactingPanels,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -620,7 +620,27 @@ impl PaperModel {
         fold: Option<FoldRequest>,
     ) -> Result<SelfIntersectionReport, ModelError> {
         let snapshot = self.render_snapshot(fold)?;
-        analyze_self_intersections(&snapshot, &self.seams)
+        let intentional_contacts = self.intentional_contact_pairs()?;
+        analyze_self_intersections(&snapshot, &intentional_contacts)
+    }
+
+    fn intentional_contact_pairs(&self) -> Result<HashSet<(PanelId, PanelId)>, ModelError> {
+        let mut contacts: HashSet<(PanelId, PanelId)> = self
+            .seams
+            .iter()
+            .filter(|seam| seam.panel_a != seam.panel_b)
+            .map(|seam| canonical_panel_pair(seam.panel_a, seam.panel_b))
+            .collect();
+        for left_index in 0..self.panels.len() {
+            for right_index in (left_index + 1)..self.panels.len() {
+                let left = &self.panels[left_index];
+                let right = &self.panels[right_index];
+                if self.topology.faces_share_vertex(left.face, right.face)? {
+                    contacts.insert(canonical_panel_pair(left.id, right.id));
+                }
+            }
+        }
+        Ok(contacts)
     }
 
     pub fn three_d_mesh(&self, fold: Option<FoldRequest>) -> Result<Mesh, MeshBuildError> {
@@ -803,7 +823,7 @@ impl ResolvedFold {
 
 fn analyze_self_intersections(
     snapshot: &RenderSnapshot,
-    seams: &[Seam],
+    intentional_contacts: &HashSet<(PanelId, PanelId)>,
 ) -> Result<SelfIntersectionReport, ModelError> {
     debug_assert_eq!(snapshot.indices.len() / 3, snapshot.triangle_panels.len());
     let triangle_count = snapshot.triangle_panels.len();
@@ -828,11 +848,6 @@ fn analyze_self_intersections(
         ));
     }
 
-    let neighbors: HashSet<(PanelId, PanelId)> = seams
-        .iter()
-        .filter(|seam| seam.panel_a != seam.panel_b)
-        .map(|seam| canonical_panel_pair(seam.panel_a, seam.panel_b))
-        .collect();
     let bvh = StaticBvh::build(&bodies);
     let raw_candidates = bvh.overlapping_pairs();
     let broad_phase_candidates = raw_candidates.len();
@@ -846,7 +861,7 @@ fn analyze_self_intersections(
         let left_panel = snapshot.triangle_panels[left_index];
         let right_panel = snapshot.triangle_panels[right_index];
         if left_panel == right_panel
-            || neighbors.contains(&canonical_panel_pair(left_panel, right_panel))
+            || intentional_contacts.contains(&canonical_panel_pair(left_panel, right_panel))
         {
             continue;
         }
@@ -874,7 +889,7 @@ fn analyze_self_intersections(
     }
 
     Ok(SelfIntersectionReport {
-        scope: SelfIntersectionScope::NonNeighborPanels,
+        scope: SelfIntersectionScope::NonContactingPanels,
         triangle_count,
         broad_phase_candidates,
         narrow_phase_tests,
@@ -1452,7 +1467,7 @@ mod tests {
             panel_count: 2,
             component_count: 2,
         };
-        let report = analyze_self_intersections(&snapshot, &[]).unwrap();
+        let report = analyze_self_intersections(&snapshot, &HashSet::new()).unwrap();
         assert_eq!(report.triangle_count, 2);
         assert_eq!(report.narrow_phase_tests, 1);
         assert_eq!(report.intersections.len(), 1);
@@ -1486,9 +1501,39 @@ mod tests {
             panel_a: PanelId(0),
             panel_b: PanelId(1),
         };
-        let report = analyze_self_intersections(&snapshot, &[neighbor]).unwrap();
+        let report = analyze_self_intersections(
+            &snapshot,
+            &HashSet::from([canonical_panel_pair(neighbor.panel_a, neighbor.panel_b)]),
+        )
+        .unwrap();
         assert!(report.is_proven_clear());
         assert_eq!(report.narrow_phase_tests, 0);
+    }
+
+    #[test]
+    fn crossing_creases_shared_vertex_is_intentional_contact() {
+        let mut model = PaperModel::rectangle(2.0, 2.0).unwrap();
+        model
+            .split_panel_with_segment(
+                PanelId(0),
+                Point2::new(0.0, -1.0),
+                Point2::new(0.0, 1.0),
+                OperationKind::Crease,
+            )
+            .unwrap();
+        model
+            .split_across_panels_with_polyline(
+                &[Point2::new(-1.0, 0.0), Point2::new(1.0, 0.0)],
+                OperationKind::Crease,
+            )
+            .unwrap();
+
+        let contacts = model.intentional_contact_pairs().unwrap();
+        assert!(contacts.contains(&canonical_panel_pair(PanelId(0), PanelId(3))));
+        let report = model.self_intersection_report(None).unwrap();
+        assert!(report.is_proven_clear());
+        assert!(report.intersections.is_empty());
+        assert!(report.indeterminate_pairs.is_empty());
     }
 
     #[test]
