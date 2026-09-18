@@ -54,20 +54,14 @@ fn assert_vertices_close(actual: &[[f32; 3]], expected: &[[f32; 3]]) {
 
 #[test]
 fn equivalent_obj_geometry_normalizes_identically_across_translation_and_scale() {
-    let first = load_target(
-        "first.obj",
-        b"v 0 0 0\nv 2 0 0\nv 0 2 0\nf 1 2 3\n",
-    )
-    .unwrap()
-    .snapshot()
-    .unwrap();
-    let second = load_target(
-        "second.obj",
-        b"v 10 -4 2\nv 18 -4 2\nv 10 4 2\nf 1 2 3\n",
-    )
-    .unwrap()
-    .snapshot()
-    .unwrap();
+    let first = load_target("first.obj", b"v 0 0 0\nv 2 0 0\nv 0 2 0\nf 1 2 3\n")
+        .unwrap()
+        .snapshot()
+        .unwrap();
+    let second = load_target("second.obj", b"v 10 -4 2\nv 18 -4 2\nv 10 4 2\nf 1 2 3\n")
+        .unwrap()
+        .snapshot()
+        .unwrap();
 
     assert_eq!(first.kind, TargetKind::Mesh);
     assert_eq!(first.indices, second.indices);
@@ -86,13 +80,10 @@ fn equivalent_obj_geometry_normalizes_identically_across_translation_and_scale()
 
 #[test]
 fn exact_source_fingerprint_changes_even_when_normalized_geometry_is_equivalent() {
-    let plain = load_target(
-        "triangle.obj",
-        b"v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n",
-    )
-    .unwrap()
-    .snapshot()
-    .unwrap();
+    let plain = load_target("triangle.obj", b"v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n")
+        .unwrap()
+        .snapshot()
+        .unwrap();
     let commented = load_target(
         "triangle.obj",
         b"# same geometry, different source bytes\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n",
@@ -152,11 +143,14 @@ fn skeleton_hierarchy_is_normalized_without_losing_edges_or_names() {
     .unwrap();
 
     assert_eq!(snapshot.kind, TargetKind::Skeleton);
-    assert_eq!(snapshot.joint_names, vec![
-        Some("root".to_owned()),
-        Some("spine".to_owned()),
-        Some("head".to_owned()),
-    ]);
+    assert_eq!(
+        snapshot.joint_names,
+        vec![
+            Some("root".to_owned()),
+            Some("spine".to_owned()),
+            Some("head".to_owned()),
+        ]
+    );
     assert_eq!(snapshot.edges, vec![[0, 1], [1, 2]]);
     assert_vertices_close(
         &snapshot.vertices,
@@ -181,10 +175,7 @@ fn one_joint_skeleton_remains_finite_and_centered() {
     assert_eq!(snapshot.vertices, vec![[0.0, 0.0, 0.0]]);
     assert_eq!(snapshot.normalization.source_max_extent, 0.0);
     assert_eq!(snapshot.normalization.uniform_scale, 1.0);
-    assert_eq!(
-        snapshot.measurements.skeleton_total_edge_length,
-        Some(0.0)
-    );
+    assert_eq!(snapshot.measurements.skeleton_total_edge_length, Some(0.0));
 }
 
 #[test]
