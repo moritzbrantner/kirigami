@@ -29,6 +29,7 @@
 - Renderer-neutral immutable snapshots plus `three-d-core::Mesh` conversion.
 - Rust/WASM browser proof and GitHub Pages deployment.
 - Browser upload for OBJ/glTF/GLB mesh targets and JSON skeleton targets, normalized outside `kirigami-core` through pinned `3d-lab` format, mesh, and animation contracts.
+- Deterministic target centering/uniform scaling to unit max extent, exact-source FNV-1a fingerprints, normalization receipts, normalized mesh/skeleton measurements, and a public integration test suite covering OBJ, glTF, GLB, skeletons, equivalence invariants, and fail-closed invalid inputs.
 
 ## Next vertical slices
 
@@ -51,4 +52,4 @@ The browser can now accept an uploaded OBJ/glTF/GLB mesh or a simple JSON skelet
 
 The approximation layer should remain outside the authoritative paper model. It proposes deterministic candidate command sequences (panels, cuts, creases, and fold targets); `kirigami-core` validates and evaluates those candidates using the same topology and folding rules as hand-authored patterns. The initial objective should balance surface/shape error against panel count, total cut length, crease complexity, fold-angle complexity, self-intersection, flat-foldability/manufacturability, and material bounds. Candidate generation must retain seeds, input fingerprints, objective weights, and evaluation receipts so improvements can be benchmarked over time.
 
-The next target-specific slice should normalize uploaded scale/orientation, retain a deterministic input fingerprint, and define the first measurable target objective. Skeleton targets can provide a cheaper structural objective before full surface approximation; mesh targets can then add surface/shape error after simplification or developable-patch segmentation.
+Uploaded targets are now centered and uniformly scaled so their largest extent is 1, with source axes intentionally preserved. The snapshot retains a deterministic exact-byte fingerprint, source bounds/scale receipt, normalized mesh surface area, and normalized skeleton edge length. The next target-specific slice should make orientation policy explicit and add the first candidate-to-target scorer: skeleton correspondence first, then mesh surface/shape error after simplification or developable-patch segmentation.
