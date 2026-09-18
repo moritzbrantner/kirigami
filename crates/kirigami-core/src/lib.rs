@@ -22,6 +22,7 @@ use std::fmt;
 use three_d_core::{Mesh, MeshError, Vec3};
 
 const EPSILON: f32 = 1.0e-5;
+const CONTACT_INSET_RATIO: f64 = 1.0e-6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct Point2 {
@@ -120,9 +121,10 @@ pub struct RenderSnapshot {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SelfIntersectionScope {
-    /// Tests only panel pairs with no intentional topological contact. Direct seam
-    /// neighbors and panels sharing only a topology vertex are excluded.
-    NonContactingPanels,
+    /// Tests every distinct panel pair. Pairs that intentionally share a seam or
+    /// topology vertex are rechecked after a tiny deterministic interior inset so
+    /// boundary-only contact stays legal while interior overlap is still reported.
+    AllPanelPairsContactAware,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -613,7 +615,8 @@ impl PaperModel {
         })
     }
 
-    /// Reports BVH-pruned intersections between non-neighbor paper panels.
+    /// Reports BVH-pruned intersections between distinct paper panels.
+    /// Intentional seam/vertex contact is filtered from true interior overlap.
     /// The query is advisory: it does not yet reject an otherwise-valid fold.
     pub fn self_intersection_report(
         &self,
@@ -860,28 +863,47 @@ fn analyze_self_intersections(
         let right_index = candidate.b as usize;
         let left_panel = snapshot.triangle_panels[left_index];
         let right_panel = snapshot.triangle_panels[right_index];
-        if left_panel == right_panel
-            || intentional_contacts.contains(&canonical_panel_pair(left_panel, right_panel))
-        {
+        if left_panel == right_panel {
             continue;
         }
 
-        narrow_phase_tests += 1;
         let left_vertices =
             triangle_vertices(snapshot, left_index).map(|vertex| vertex.map(f64::from));
         let right_vertices =
             triangle_vertices(snapshot, right_index).map(|vertex| vertex.map(f64::from));
-        let result = gjk_intersection(
+
+        narrow_phase_tests += 1;
+        let primary = gjk_intersection(
             &ConvexHull3::new(&left_vertices),
             &ConvexHull3::new(&right_vertices),
-        );
+        )
+        .status;
+
+        let pair_has_intentional_contact =
+            intentional_contacts.contains(&canonical_panel_pair(left_panel, right_panel));
+        let status = if pair_has_intentional_contact && primary != GjkStatus::Separated {
+            // Adjacent panels legitimately meet on their authoritative seam or shared
+            // topology vertex. Insetting both convex triangles removes boundary-only
+            // contact while preserving any meaningful interior overlap/penetration.
+            let left_inset = inset_triangle(left_vertices);
+            let right_inset = inset_triangle(right_vertices);
+            narrow_phase_tests += 1;
+            gjk_intersection(
+                &ConvexHull3::new(&left_inset),
+                &ConvexHull3::new(&right_inset),
+            )
+            .status
+        } else {
+            primary
+        };
+
         let pair = SelfIntersectionPair {
             triangle_a: candidate.a,
             triangle_b: candidate.b,
             panel_a: left_panel,
             panel_b: right_panel,
         };
-        match result.status {
+        match status {
             GjkStatus::Intersecting => intersections.push(pair),
             GjkStatus::Separated => {}
             GjkStatus::NoProgress | GjkStatus::IterationLimit => indeterminate_pairs.push(pair),
@@ -889,12 +911,24 @@ fn analyze_self_intersections(
     }
 
     Ok(SelfIntersectionReport {
-        scope: SelfIntersectionScope::NonContactingPanels,
+        scope: SelfIntersectionScope::AllPanelPairsContactAware,
         triangle_count,
         broad_phase_candidates,
         narrow_phase_tests,
         indeterminate_pairs,
         intersections,
+    })
+}
+
+fn inset_triangle(vertices: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
+    let centroid = std::array::from_fn(|axis| {
+        (vertices[0][axis] + vertices[1][axis] + vertices[2][axis]) / 3.0
+    });
+    std::array::from_fn(|vertex_index| {
+        std::array::from_fn(|axis| {
+            centroid[axis]
+                + (vertices[vertex_index][axis] - centroid[axis]) * (1.0 - CONTACT_INSET_RATIO)
+        })
     })
 }
 
@@ -1476,7 +1510,7 @@ mod tests {
     }
 
     #[test]
-    fn self_intersection_scope_ignores_intended_neighbor_contact() {
+    fn contact_filter_allows_intended_neighbor_boundary_contact() {
         let snapshot = RenderSnapshot {
             vertices: vec![
                 [0.0, 0.0, 0.0],
@@ -1506,8 +1540,42 @@ mod tests {
             &HashSet::from([canonical_panel_pair(neighbor.panel_a, neighbor.panel_b)]),
         )
         .unwrap();
+        assert_eq!(
+            report.scope,
+            SelfIntersectionScope::AllPanelPairsContactAware
+        );
         assert!(report.is_proven_clear());
-        assert_eq!(report.narrow_phase_tests, 0);
+        assert!(report.narrow_phase_tests >= 1);
+    }
+
+    #[test]
+    fn adjacent_fold_contact_is_clear_but_full_overlap_is_reported() {
+        let mut model = PaperModel::rectangle(4.0, 2.0).unwrap();
+        let operation = model
+            .split_panel_with_segment(
+                PanelId(0),
+                Point2::new(0.0, -1.0),
+                Point2::new(0.0, 1.0),
+                OperationKind::Crease,
+            )
+            .unwrap();
+
+        let hinge_contact = model
+            .self_intersection_report(Some(FoldRequest {
+                operation,
+                angle_radians: std::f32::consts::FRAC_PI_2,
+            }))
+            .unwrap();
+        assert!(hinge_contact.is_proven_clear());
+
+        let overlap = model
+            .self_intersection_report(Some(FoldRequest {
+                operation,
+                angle_radians: std::f32::consts::PI,
+            }))
+            .unwrap();
+        assert!(!overlap.is_proven_clear());
+        assert!(!overlap.intersections.is_empty());
     }
 
     #[test]
