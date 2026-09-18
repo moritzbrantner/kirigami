@@ -22,7 +22,7 @@
 - Closed cuts that create detached inner panels plus authoritative outer/inner face boundary loops.
 - Multiple disjoint or nested hole loops with deterministic hole-aware rendering triangulation.
 - Boundary-bridge cuts that connect outer-to-hole or hole-to-hole components without inventing a new panel.
-- BVH-pruned, GJK-tested advisory self-intersection reports for non-contacting panel pairs, excluding direct seam neighbors and shared-topology-vertex contact; indeterminate pairs surface fail-closed.
+- BVH-pruned, GJK-tested advisory self-intersection reports across all distinct panel pairs; seam/shared-vertex neighbors use a deterministic interior-inset recheck so legal boundary contact is ignored while adjacent-panel overlap remains visible, with indeterminate results fail-closed.
 - Cuts that split connected components.
 - Creases that preserve connectivity.
 - Deterministic rigid rotation around a crease axis.
@@ -31,18 +31,17 @@
 
 ## Next vertical slices
 
-1. Extend collision validation from non-neighbor panels to adjacent-panel penetration while distinguishing intentional shared-boundary contact from overlap.
-2. Upgrade rendering/physics triangulation to constrained Delaunay when mesh quality requires it; the authoritative boundary graph remains independent of the triangulator.
-3. Add multi-crease fold state and constraint propagation so genuinely bent creases have an authoritative solver. Use the physics engine only for material/mechanical behavior, never as the authority for crease meaning.
-4. Add first-party 3D rendering through the shared `3d-lab` renderer seam while retaining the lightweight Canvas renderer as a deterministic fallback/acceptance surface.
-5. Add layer ordering and flat-foldability validation.
-6. Add SVG/FOLD import/export and deterministic pattern fixtures.
-7. Add the 3D-target approximation layer described below once forward folding, collisions, and validity can score candidates reliably.
-8. Add broader inverse-design/optimization experiments only after the target-approximation loop is deterministic and measurable.
+1. Upgrade rendering/physics triangulation to constrained Delaunay when mesh quality requires it; the authoritative boundary graph remains independent of the triangulator.
+2. Add multi-crease fold state and constraint propagation so genuinely bent creases have an authoritative solver. Use the physics engine only for material/mechanical behavior, never as the authority for crease meaning.
+3. Add first-party 3D rendering through the shared `3d-lab` renderer seam while retaining the lightweight Canvas renderer as a deterministic fallback/acceptance surface.
+4. Add layer ordering and flat-foldability validation.
+5. Add SVG/FOLD import/export and deterministic pattern fixtures.
+6. Add the 3D-target approximation layer described below once forward folding, collisions, and validity can score candidates reliably.
+7. Add broader inverse-design/optimization experiments only after the target-approximation loop is deterministic and measurable.
 
 ## Algorithm priorities
 
-Closed-path/hole arrangement, multiple boundary loops, and boundary bridges are part of the deterministic topology foundation. Self-intersection now reuses the pinned `rust-kernels` static BVH for deterministic candidate pruning and generic GJK convex-hull queries for triangle tests; the first accepted scope intentionally excludes direct seam neighbors and shared-topology-vertex contact. The next algorithm work is contact-aware adjacent-panel validation, constrained triangulation, and multi-crease constraint solving.
+Closed-path/hole arrangement, multiple boundary loops, and boundary bridges are part of the deterministic topology foundation. Self-intersection reuses the pinned `rust-kernels` static BVH for deterministic candidate pruning and generic GJK convex-hull queries for triangle tests. Adjacent panels are now included: a second deterministic GJK pass over slightly inset triangles removes legal boundary-only contact without hiding interior overlap. The next algorithm work is constrained triangulation and multi-crease constraint solving.
 
 
 ## 3D target approximation
