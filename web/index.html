@@ -12,8 +12,18 @@
     <header>
       <p class="eyebrow">Rust / WebAssembly geometry lab</p>
       <h1>Kirigami</h1>
-      <p class="lede">Explore creases, open cuts, closed cuts, and boundary bridges that open annuli or merge hole boundaries.</p>
+      <p class="lede">Explore kirigami geometry or load a 3D mesh or skeleton as the target shape for future approximation.</p>
     </header>
+
+    <section class="target-controls" aria-label="3D target">
+      <label class="file-control">
+        3D target
+        <input id="target-file" type="file" accept=".obj,.gltf,.glb,.json" />
+        <span>OBJ, glTF/GLB, or skeleton JSON with parent indices and local translations.</span>
+      </label>
+      <button id="clear-target" type="button" disabled>Clear target</button>
+      <p id="target-status" class="status" aria-live="polite">No target loaded.</p>
+    </section>
 
     <section class="controls" aria-label="Kirigami controls">
       <label>
@@ -32,13 +42,13 @@
       <p id="status" class="status" aria-live="polite"></p>
     </section>
 
-    <section class="viewport" aria-label="Interactive paper preview">
+    <section class="viewport" aria-label="Interactive paper or target preview">
       <canvas id="canvas"></canvas>
     </section>
 
     <section class="architecture">
       <h2>What this proves</h2>
-      <p><code>kirigami-core</code> owns cuts, creases, connectivity, and fold transforms. The browser receives an immutable render snapshot; it does not decide what a valid paper operation means.</p>
+      <p><code>kirigami-core</code> owns paper semantics. <code>kirigami-targets</code> normalizes uploaded target geometry through pinned <code>3d-lab</code> mesh, format, and skeleton contracts. The browser only supplies bytes and renders snapshots.</p>
     </section>
   </main>
   <script type="module" src="./app.js"></script>
