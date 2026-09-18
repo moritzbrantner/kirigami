@@ -30,17 +30,23 @@ function resizeCanvas() {
 
 function createProjector(vertices) {
   const rect = canvas.getBoundingClientRect();
-  const raw = vertices.map(([x, y, z]) => [x - z * 0.55, -(y + z * 0.25)]);
-  if (raw.length === 0) {
+  if (vertices.length === 0) {
     return () => [rect.width * 0.5, rect.height * 0.5];
   }
 
-  const xs = raw.map(([x]) => x);
-  const ys = raw.map(([, y]) => y);
-  const minX = Math.min(...xs);
-  const maxX = Math.max(...xs);
-  const minY = Math.min(...ys);
-  const maxY = Math.max(...ys);
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const [x, y, z] of vertices) {
+    const projectedX = x - z * 0.55;
+    const projectedY = -(y + z * 0.25);
+    minX = Math.min(minX, projectedX);
+    maxX = Math.max(maxX, projectedX);
+    minY = Math.min(minY, projectedY);
+    maxY = Math.max(maxY, projectedY);
+  }
+
   const spanX = Math.max(maxX - minX, 1e-4);
   const spanY = Math.max(maxY - minY, 1e-4);
   const padding = Math.min(36, rect.width * 0.08, rect.height * 0.08);
