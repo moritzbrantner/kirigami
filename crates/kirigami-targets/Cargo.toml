@@ -9,5 +9,6 @@ rust-version.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 three-d-animation.workspace = true
+three-d-assets.workspace = true
 three-d-core.workspace = true
 three-d-formats.workspace = true
