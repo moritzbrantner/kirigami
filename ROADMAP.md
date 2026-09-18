@@ -28,6 +28,7 @@
 - Deterministic rigid rotation around a crease axis.
 - Renderer-neutral immutable snapshots plus `three-d-core::Mesh` conversion.
 - Rust/WASM browser proof and GitHub Pages deployment.
+- Browser upload for OBJ/glTF/GLB mesh targets and JSON skeleton targets, normalized outside `kirigami-core` through pinned `3d-lab` format, mesh, and animation contracts.
 
 ## Next vertical slices
 
@@ -46,8 +47,8 @@ Closed-path/hole arrangement, multiple boundary loops, and boundary bridges are 
 
 ## 3D target approximation
 
-A future user flow should accept an uploaded 3D model and produce a manufacturable kirigami approximation. File-format ingestion is not a `kirigami-core` responsibility: shared asset/3D adapters should normalize OBJ/glTF/GLB or other supported sources into `three_d_core::Mesh`, then the approximation layer consumes that renderer-neutral target mesh.
+The browser can now accept an uploaded OBJ/glTF/GLB mesh or a simple JSON skeleton. File-format ingestion is not a `kirigami-core` responsibility: `kirigami-targets` delegates mesh decoding to pinned `3d-lab` format/asset contracts and skeleton hierarchy evaluation to `three-d-animation`, then exposes one renderer-neutral target snapshot. A loaded target is still only input evidence; it does not redefine paper topology or validity.
 
 The approximation layer should remain outside the authoritative paper model. It proposes deterministic candidate command sequences (panels, cuts, creases, and fold targets); `kirigami-core` validates and evaluates those candidates using the same topology and folding rules as hand-authored patterns. The initial objective should balance surface/shape error against panel count, total cut length, crease complexity, fold-angle complexity, self-intersection, flat-foldability/manufacturability, and material bounds. Candidate generation must retain seeds, input fingerprints, objective weights, and evaluation receipts so improvements can be benchmarked over time.
 
-The first useful vertical slice should use a bounded static target mesh, not arbitrary uploaded files: simplify/segment the target into approximately developable patches, generate one deterministic candidate pattern, fold it through the authoritative solver, and report geometric error plus pattern-complexity metrics. Browser upload and richer format support should come only after this mesh-to-pattern seam is proven.
+The next target-specific slice should normalize uploaded scale/orientation, retain a deterministic input fingerprint, and define the first measurable target objective. Skeleton targets can provide a cheaper structural objective before full surface approximation; mesh targets can then add surface/shape error after simplification or developable-patch segmentation.

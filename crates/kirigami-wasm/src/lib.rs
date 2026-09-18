@@ -1,4 +1,5 @@
 use kirigami_core::{FoldRequest, OperationKind, PanelId, PaperModel, Point2};
+use kirigami_targets::load_target;
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -71,6 +72,13 @@ pub fn demo_snapshot(angle_degrees: f32, mode: &str) -> Result<String, JsValue> 
         }
     };
     let snapshot = model.render_snapshot(fold).map_err(js_error)?;
+    serde_json::to_string(&snapshot).map_err(js_error)
+}
+
+#[wasm_bindgen]
+pub fn target_snapshot(file_name: &str, bytes: &[u8]) -> Result<String, JsValue> {
+    let target = load_target(file_name, bytes).map_err(js_error)?;
+    let snapshot = target.snapshot().map_err(js_error)?;
     serde_json::to_string(&snapshot).map_err(js_error)
 }
 
