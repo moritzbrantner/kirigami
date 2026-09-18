@@ -60,16 +60,18 @@ pub enum TargetError {
 impl fmt::Display for TargetError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UnsupportedFileType => formatter.write_str(
-                "supported target files are .obj, .gltf, .glb, and skeleton .json",
-            ),
+            Self::UnsupportedFileType => formatter
+                .write_str("supported target files are .obj, .gltf, .glb, and skeleton .json"),
             Self::MeshFormat(error) => write!(formatter, "could not load target mesh: {error}"),
             Self::InvalidSkeletonJson(error) => {
                 write!(formatter, "invalid skeleton JSON: {error}")
             }
             Self::EmptySkeleton => formatter.write_str("a skeleton requires at least one joint"),
             Self::NonFiniteJointTranslation { joint } => {
-                write!(formatter, "skeleton joint {joint} has a non-finite translation")
+                write!(
+                    formatter,
+                    "skeleton joint {joint} has a non-finite translation"
+                )
             }
             Self::InvalidSkeleton(error) => write!(formatter, "invalid skeleton: {error}"),
             Self::TooManyVertices => {
@@ -114,8 +116,7 @@ impl MeshTarget {
         let mut indices = Vec::new();
 
         for mesh in &self.meshes {
-            let base =
-                u32::try_from(vertices.len()).map_err(|_| TargetError::TooManyVertices)?;
+            let base = u32::try_from(vertices.len()).map_err(|_| TargetError::TooManyVertices)?;
             vertices.extend(
                 mesh.vertices()
                     .iter()
@@ -190,7 +191,11 @@ impl SkeletonTarget {
 
         Ok(Self {
             skeleton,
-            joint_names: document.joints.into_iter().map(|joint| joint.name).collect(),
+            joint_names: document
+                .joints
+                .into_iter()
+                .map(|joint| joint.name)
+                .collect(),
             world_positions,
         })
     }
@@ -265,11 +270,7 @@ mod tests {
 
     #[test]
     fn loads_obj_into_renderer_neutral_mesh_snapshot() {
-        let target = load_target(
-            "triangle.obj",
-            b"v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n",
-        )
-        .unwrap();
+        let target = load_target("triangle.obj", b"v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n").unwrap();
         let snapshot = target.snapshot().unwrap();
 
         assert_eq!(snapshot.kind, TargetKind::Mesh);
