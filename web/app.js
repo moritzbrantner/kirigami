@@ -136,7 +136,8 @@ function renderTarget() {
       context.stroke();
     }
     const clipped = activeTarget.triangle_count > MAX_PREVIEW_TRIANGLES;
-    status.textContent = `Target mesh · ${activeTarget.mesh_count} mesh${activeTarget.mesh_count === 1 ? "" : "es"} · ${activeTarget.vertices.length} vertices · ${activeTarget.triangle_count} triangles${clipped ? " · preview capped at 25,000 triangles" : ""}`;
+    const area = activeTarget.measurements.mesh_surface_area.toFixed(3);
+    status.textContent = `Target mesh · ${activeTarget.mesh_count} mesh${activeTarget.mesh_count === 1 ? "" : "es"} · ${activeTarget.vertices.length} vertices · ${activeTarget.triangle_count} triangles · normalized area ${area}${clipped ? " · preview capped at 25,000 triangles" : ""}`;
     return;
   }
 
@@ -159,7 +160,8 @@ function renderTarget() {
     context.lineWidth = 2;
     context.stroke();
   }
-  status.textContent = `Target skeleton · ${activeTarget.joint_count} joints`;
+  const length = activeTarget.measurements.skeleton_total_edge_length.toFixed(3);
+  status.textContent = `Target skeleton · ${activeTarget.joint_count} joints · normalized bone length ${length}`;
 }
 
 function render() {
@@ -182,10 +184,11 @@ targetFile.addEventListener("change", async () => {
     const bytes = new Uint8Array(await file.arrayBuffer());
     activeTarget = JSON.parse(target_snapshot(file.name, bytes));
     clearTarget.disabled = false;
+    const fingerprint = activeTarget.source_fingerprint.split(":").at(-1).slice(0, 8);
     targetStatus.textContent =
       activeTarget.kind === "mesh"
-        ? `${file.name} loaded as a 3D mesh target`
-        : `${file.name} loaded as a skeleton target`;
+        ? `${file.name} loaded as a normalized 3D mesh · ${fingerprint}`
+        : `${file.name} loaded as a normalized skeleton · ${fingerprint}`;
     render();
   } catch (error) {
     activeTarget = null;
