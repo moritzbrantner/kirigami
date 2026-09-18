@@ -217,7 +217,7 @@ fn minimal_glb() -> Vec<u8> {
     }"#;
 
     let mut json_chunk = json.to_vec();
-    while !json_chunk.len().is_multiple_of(4) {
+    while json_chunk.len() % 4 != 0 {
         json_chunk.push(b' ');
     }
 
@@ -228,7 +228,7 @@ fn minimal_glb() -> Vec<u8> {
     for index in [0_u16, 1, 2] {
         bin_chunk.extend_from_slice(&index.to_le_bytes());
     }
-    while !bin_chunk.len().is_multiple_of(4) {
+    while bin_chunk.len() % 4 != 0 {
         bin_chunk.push(0);
     }
 
