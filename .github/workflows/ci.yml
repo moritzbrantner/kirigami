@@ -20,8 +20,8 @@ jobs:
       - name: Formatting
         run: cargo fmt --all -- --check
       - name: Lint
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Tests
-        run: cargo test --workspace --all-targets
+        run: cargo test --locked --workspace --all-targets
       - name: WASM compile
-        run: cargo build -p kirigami-wasm --target wasm32-unknown-unknown --release
+        run: cargo build --locked -p kirigami-wasm --target wasm32-unknown-unknown --release
