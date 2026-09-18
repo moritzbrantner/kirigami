@@ -9,6 +9,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
+name = "base64"
+version = "0.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -21,6 +27,12 @@ source = "git+https://github.com/moritzbrantner/rust-kernels?rev=980091094a98261
 dependencies = [
  "spatial-kernels",
 ]
+
+[[package]]
+name = "byteorder"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 
 [[package]]
 name = "cfg-if"
@@ -46,6 +58,48 @@ dependencies = [
 ]
 
 [[package]]
+name = "gltf"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3ce1918195723ce6ac74e80542c5a96a40c2b26162c1957a5cd70799b8cacf7"
+dependencies = [
+ "byteorder",
+ "gltf-json",
+ "lazy_static",
+ "serde_json",
+]
+
+[[package]]
+name = "gltf-derive"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "14070e711538afba5d6c807edb74bcb84e5dbb9211a3bf5dea0dfab5b24f4c51"
+dependencies = [
+ "inflections",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "gltf-json"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6176f9d60a7eab0a877e8e96548605dedbde9190a7ae1e80bbcc1c9af03ab14"
+dependencies = [
+ "gltf-derive",
+ "serde",
+ "serde_derive",
+ "serde_json",
+]
+
+[[package]]
+name = "inflections"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a257582fdcde896fd96463bf2d40eefea0580021c0712a0e2b028b60b47a837a"
+
+[[package]]
 name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -64,13 +118,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "kirigami-targets"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "three-d-animation",
+ "three-d-assets",
+ "three-d-core",
+ "three-d-formats",
+]
+
+[[package]]
 name = "kirigami-wasm"
 version = "0.1.0"
 dependencies = [
  "kirigami-core",
+ "kirigami-targets",
  "serde_json",
  "wasm-bindgen",
 ]
+
+[[package]]
+name = "lazy_static"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "memchr"
@@ -144,7 +217,7 @@ checksum = "e7a5d71263a5a7d47b41f6b3f06ba276f10cc18b0931f1799f710578e2309348"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 3.0.5",
 ]
 
 [[package]]
@@ -167,6 +240,17 @@ source = "git+https://github.com/moritzbrantner/rust-kernels?rev=980091094a98261
 
 [[package]]
 name = "syn"
+version = "2.0.119"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "872831b642d1a07999a962a351ed35b955ea2cfc8f3862091e2a240a84f17297"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "unicode-ident",
+]
+
+[[package]]
+name = "syn"
 version = "3.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "12df2e0110f65b775f769bb17ef989067a1d931b2eb822bd4346631eeada89f9"
@@ -177,9 +261,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "three-d-animation"
+version = "0.1.0"
+source = "git+https://github.com/moritzbrantner/3d-lab?rev=419333a7ecedc94a99bfc6b940fbdbcfc7bec958#419333a7ecedc94a99bfc6b940fbdbcfc7bec958"
+dependencies = [
+ "three-d-core",
+]
+
+[[package]]
+name = "three-d-assets"
+version = "0.1.0"
+source = "git+https://github.com/moritzbrantner/3d-lab?rev=419333a7ecedc94a99bfc6b940fbdbcfc7bec958#419333a7ecedc94a99bfc6b940fbdbcfc7bec958"
+dependencies = [
+ "three-d-core",
+]
+
+[[package]]
 name = "three-d-core"
 version = "0.1.0"
 source = "git+https://github.com/moritzbrantner/3d-lab?rev=419333a7ecedc94a99bfc6b940fbdbcfc7bec958#419333a7ecedc94a99bfc6b940fbdbcfc7bec958"
+
+[[package]]
+name = "three-d-formats"
+version = "0.1.0"
+source = "git+https://github.com/moritzbrantner/3d-lab?rev=419333a7ecedc94a99bfc6b940fbdbcfc7bec958#419333a7ecedc94a99bfc6b940fbdbcfc7bec958"
+dependencies = [
+ "base64",
+ "gltf",
+ "three-d-assets",
+ "three-d-core",
+ "tobj",
+]
+
+[[package]]
+name = "tobj"
+version = "4.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6eb8e04167c1c0c76b5de63226fd733485ad63ef71e40de31e16272f47b099e2"
 
 [[package]]
 name = "unicode-ident"
@@ -219,7 +337,7 @@ dependencies = [
  "bumpalo",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 3.0.5",
  "wasm-bindgen-shared",
 ]
 
