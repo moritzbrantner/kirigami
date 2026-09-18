@@ -341,8 +341,7 @@ impl TargetNormalization {
             }
         }
 
-        let source_center =
-            std::array::from_fn(|axis| (min[axis] + max[axis]) * 0.5);
+        let source_center = std::array::from_fn(|axis| (min[axis] + max[axis]) * 0.5);
         let source_max_extent = (0..3)
             .map(|axis| max[axis] - min[axis])
             .fold(0.0_f32, f32::max);
@@ -399,16 +398,12 @@ fn load_mesh_target(
     )))
 }
 
-fn normalize_points(
-    points: &[[f32; 3]],
-    normalization: TargetNormalization,
-) -> Vec<[f32; 3]> {
+fn normalize_points(points: &[[f32; 3]], normalization: TargetNormalization) -> Vec<[f32; 3]> {
     points
         .iter()
         .map(|point| {
             std::array::from_fn(|axis| {
-                (point[axis] - normalization.source_center[axis])
-                    * normalization.uniform_scale
+                (point[axis] - normalization.source_center[axis]) * normalization.uniform_scale
             })
         })
         .collect()
@@ -473,10 +468,8 @@ mod tests {
 
     #[test]
     fn normalization_centers_and_scales_the_largest_extent() {
-        let normalization =
-            TargetNormalization::from_points(&[[2.0, 4.0, -2.0], [6.0, 6.0, 0.0]]);
-        let normalized =
-            normalize_points(&[[2.0, 4.0, -2.0], [6.0, 6.0, 0.0]], normalization);
+        let normalization = TargetNormalization::from_points(&[[2.0, 4.0, -2.0], [6.0, 6.0, 0.0]]);
+        let normalized = normalize_points(&[[2.0, 4.0, -2.0], [6.0, 6.0, 0.0]], normalization);
 
         assert_eq!(normalization.source_center, [4.0, 5.0, -1.0]);
         assert_eq!(normalization.source_max_extent, 4.0);
