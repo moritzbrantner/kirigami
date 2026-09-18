@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/kirigami-core",
+    "crates/kirigami-targets",
     "crates/kirigami-wasm",
 ]
 resolver = "2"
@@ -19,4 +20,6 @@ wasm-bindgen = "0.2"
 bvh-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "980091094a9826167a98b96781126595fbea5076" }
 geometry-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "980091094a9826167a98b96781126595fbea5076" }
 spatial-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "980091094a9826167a98b96781126595fbea5076" }
+three-d-animation = { git = "https://github.com/moritzbrantner/3d-lab", rev = "419333a7ecedc94a99bfc6b940fbdbcfc7bec958", package = "three-d-animation" }
 three-d-core = { git = "https://github.com/moritzbrantner/3d-lab", rev = "419333a7ecedc94a99bfc6b940fbdbcfc7bec958", package = "three-d-core" }
+three-d-formats = { git = "https://github.com/moritzbrantner/3d-lab", rev = "419333a7ecedc94a99bfc6b940fbdbcfc7bec958", package = "three-d-formats" }
