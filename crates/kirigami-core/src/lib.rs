@@ -921,7 +921,7 @@ fn analyze_self_intersections(
 }
 
 fn inset_triangle(vertices: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
-    let centroid = std::array::from_fn(|axis| {
+    let centroid: [f64; 3] = std::array::from_fn(|axis| {
         (vertices[0][axis] + vertices[1][axis] + vertices[2][axis]) / 3.0
     });
     std::array::from_fn(|vertex_index| {
