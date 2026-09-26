@@ -35,17 +35,18 @@ pub enum ExportError {
     InvalidMargin,
     InvalidTemplateWidth,
     DegeneratePattern,
-    TemplateDoesNotFit {
-        width_mm: f32,
-        height_mm: f32,
-    },
+    TemplateDoesNotFit { width_mm: f32, height_mm: f32 },
 }
 
 impl fmt::Display for ExportError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidPageSize => formatter.write_str("page dimensions must be finite and positive"),
-            Self::InvalidMargin => formatter.write_str("page margin must be finite and non-negative"),
+            Self::InvalidPageSize => {
+                formatter.write_str("page dimensions must be finite and positive")
+            }
+            Self::InvalidMargin => {
+                formatter.write_str("page margin must be finite and non-negative")
+            }
             Self::InvalidTemplateWidth => {
                 formatter.write_str("template width must be finite and positive")
             }
@@ -132,7 +133,9 @@ pub fn export_svg(
     let mut svg = format!(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{template_width_mm:.3}mm\" height=\"{height_mm:.3}mm\" viewBox=\"0 0 {template_width_mm:.3} {height_mm:.3}\">\n"
     );
-    svg.push_str("  <g fill=\"none\" stroke=\"#000\" stroke-linecap=\"round\" stroke-linejoin=\"round\">\n");
+    svg.push_str(
+        "  <g fill=\"none\" stroke=\"#000\" stroke-linecap=\"round\" stroke-linejoin=\"round\">\n",
+    );
     svg.push_str("    <g stroke-width=\"0.35\">\n");
     for segment in &pattern.boundary_segments {
         push_svg_segment(&mut svg, pattern, scale, height_mm, segment[0], segment[1]);
@@ -157,10 +160,7 @@ pub fn export_svg(
     Ok(svg)
 }
 
-fn layout(
-    pattern: &FlatPatternSnapshot,
-    options: PdfExportOptions,
-) -> Result<Layout, ExportError> {
+fn layout(pattern: &FlatPatternSnapshot, options: PdfExportOptions) -> Result<Layout, ExportError> {
     if !options.page_width_mm.is_finite()
         || !options.page_height_mm.is_finite()
         || options.page_width_mm <= 0.0
