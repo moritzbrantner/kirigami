@@ -1,4 +1,4 @@
-import init, { demo_pdf, demo_snapshot, demo_svg, target_snapshot } from "./pkg/kirigami_wasm.js";
+import init, { demo_flat_foldability, demo_pdf, demo_snapshot, demo_svg, target_snapshot } from "./pkg/kirigami_wasm.js";
 
 const canvas = document.querySelector("#canvas");
 const context = canvas.getContext("2d");
@@ -113,7 +113,14 @@ function renderPaper() {
   }
   context.setLineDash([]);
 
-  status.textContent = `${snapshot.panel_count} panels · ${snapshot.component_count} connected component${snapshot.component_count === 1 ? "" : "s"}`;
+  const flatFoldability = JSON.parse(demo_flat_foldability(currentMode));
+  const validity =
+    flatFoldability.checked_vertices === 0
+      ? ""
+      : flatFoldability.issues.length === 0
+        ? " · local flat-fold checks clear"
+        : ` · ${flatFoldability.issues.length} local flat-foldability issue${flatFoldability.issues.length === 1 ? "" : "s"}`;
+  status.textContent = `${snapshot.panel_count} panels · ${snapshot.component_count} connected component${snapshot.component_count === 1 ? "" : "s"}${validity}`;
 }
 
 function renderTarget() {

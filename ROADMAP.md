@@ -29,6 +29,7 @@
 - Deterministic multi-crease fold states for straight creases, with canonical operation ordering, world-space hinge propagation, and fail-closed detection when an earlier fold kinks a later rigid crease.
 - Renderer-neutral immutable snapshots plus `three-d-core::Mesh` conversion.
 - Authoritative flat-pattern snapshots plus deterministic print-ready PDF and physical-size SVG export; cuts stay solid and creases dashed without moving paper semantics into the exporter.
+- Geometry-only local flat-foldability reports for interior crease vertices, checking even crease degree and Kawasaki's alternating-angle condition while excluding external/cut boundary vertices.
 - Rust/WASM browser proof and GitHub Pages deployment.
 - Browser upload for OBJ/glTF/GLB mesh targets and JSON skeleton targets, normalized outside `kirigami-core` through pinned `3d-lab` format, mesh, and animation contracts.
 - Deterministic target centering/uniform scaling to unit max extent, exact-source FNV-1a fingerprints, normalization receipts, normalized mesh/skeleton measurements, and a public integration test suite covering OBJ, glTF, GLB, skeletons, equivalence invariants, and fail-closed invalid inputs.
@@ -38,7 +39,7 @@
 1. Upgrade rendering/physics triangulation to constrained Delaunay when mesh quality requires it; the authoritative boundary graph remains independent of the triangulator.
 2. Extend the fold constraint solver from rigid straight multi-crease states to crossing and genuinely bent creases. Use the physics engine only for material/mechanical behavior, never as the authority for crease meaning.
 3. Add first-party 3D rendering through the shared `3d-lab` renderer seam while retaining the lightweight Canvas renderer as a deterministic fallback/acceptance surface.
-4. Add layer ordering and flat-foldability validation.
+4. Extend flat-foldability validation from local geometry checks to mountain/valley assignments, global layer ordering, and global validity.
 5. Extend the export/import seam with FOLD import/export and deterministic pattern fixtures; PDF and SVG export are implemented.
 6. Add the 3D-target approximation layer described below once forward folding, collisions, and validity can score candidates reliably.
 7. Add broader inverse-design/optimization experiments only after the target-approximation loop is deterministic and measurable.
