@@ -163,7 +163,6 @@ pub fn export_svg(
     Ok(svg)
 }
 
-
 #[derive(Debug, Serialize)]
 struct FoldDocument {
     file_spec: f32,
@@ -275,11 +274,9 @@ fn push_fold_edge(
 
 fn fold_vertex_id(vertices: &mut Vec<[f32; 2]>, point: [f32; 2]) -> Result<u32, ExportError> {
     if let Some(index) = vertices.iter().position(|candidate| {
-        (candidate[0] - point[0]).abs() <= EPSILON
-            && (candidate[1] - point[1]).abs() <= EPSILON
+        (candidate[0] - point[0]).abs() <= EPSILON && (candidate[1] - point[1]).abs() <= EPSILON
     }) {
-        return u32::try_from(index)
-            .map_err(|error| ExportError::Serialization(error.to_string()));
+        return u32::try_from(index).map_err(|error| ExportError::Serialization(error.to_string()));
     }
 
     let index = u32::try_from(vertices.len())
@@ -578,5 +575,4 @@ mod tests {
                 .any(|assignment| assignment.as_str() == Some("C"))
         );
     }
-
 }
