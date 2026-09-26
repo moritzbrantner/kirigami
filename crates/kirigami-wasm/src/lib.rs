@@ -95,9 +95,7 @@ pub fn demo_snapshot(angle_degrees: f32, mode: &str) -> Result<String, JsValue> 
             ));
         }
     };
-    let snapshot = model
-        .render_snapshot_with_folds(&folds)
-        .map_err(js_error)?;
+    let snapshot = model.render_snapshot_with_folds(&folds).map_err(js_error)?;
     serde_json::to_string(&snapshot).map_err(js_error)
 }
 
