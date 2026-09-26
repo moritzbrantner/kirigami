@@ -14,7 +14,7 @@ Interactive kirigami geometry and simulation for the web, with authoritative Rus
 
 The current domain supports straight and polyline cuts, holes, bridges, and straight multi-crease fold states. The topology layer is intentionally reusable for arbitrary simple faces so constrained triangulation quality upgrades, collision queries, and printable/export adapters do not require moving authority into the UI or renderer.
 
-The browser can export the current flat pattern as PDF or SVG at an exact requested physical width. PDF output is single-page vector geometry with solid material/cut lines and dashed crease lines, suitable for printing at 100% scale.
+The browser can export the current flat pattern as PDF, SVG, or FOLD at an exact requested physical width. PDF output is single-page vector geometry with solid material/cut lines and dashed crease lines, suitable for printing at 100% scale. FOLD 1.2 output preserves subdivided crossing vertices, marks external edges as `B`, cut/slit edges as `C`, and keeps creases `U` until mountain/valley assignments become authoritative.
 
 The PR validation workflow checks formatting, clippy, tests, and the WASM target at the exact proposed head before integration.
 

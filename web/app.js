@@ -1,4 +1,4 @@
-import init, { demo_flat_foldability, demo_pdf, demo_snapshot, demo_svg, target_snapshot } from "./pkg/kirigami_wasm.js";
+import init, { demo_flat_foldability, demo_fold, demo_pdf, demo_snapshot, demo_svg, target_snapshot } from "./pkg/kirigami_wasm.js";
 
 const canvas = document.querySelector("#canvas");
 const context = canvas.getContext("2d");
@@ -13,6 +13,7 @@ const exportPage = document.querySelector("#export-page");
 const exportWidth = document.querySelector("#export-width");
 const exportPdf = document.querySelector("#export-pdf");
 const exportSvg = document.querySelector("#export-svg");
+const exportFold = document.querySelector("#export-fold");
 const exportStatus = document.querySelector("#export-status");
 
 const MAX_PREVIEW_TRIANGLES = 25000;
@@ -268,6 +269,17 @@ exportSvg.addEventListener("click", () => {
     const svg = demo_svg(mode.value, width);
     downloadBlob(svg, "image/svg+xml;charset=utf-8", "svg");
     exportStatus.textContent = `SVG · ${width} mm wide`;
+  } catch (error) {
+    exportStatus.textContent = error instanceof Error ? error.message : String(error);
+  }
+});
+
+exportFold.addEventListener("click", () => {
+  try {
+    const width = templateWidthMm();
+    const fold = demo_fold(mode.value, width);
+    downloadBlob(fold, "application/json;charset=utf-8", "fold");
+    exportStatus.textContent = `FOLD · ${width} mm wide`;
   } catch (error) {
     exportStatus.textContent = error instanceof Error ? error.message : String(error);
   }
