@@ -132,11 +132,22 @@ pub struct FlatPatternOperation {
     pub path: Vec<Point2>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct FlatPatternSegment {
+    pub operation: OperationId,
+    pub kind: OperationKind,
+    pub start: Point2,
+    pub end: Point2,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct FlatPatternSnapshot {
     /// External material boundary. Cut and crease paths remain separate semantic
     /// operations so exporters never infer paper meaning from topology adjacency.
     pub boundary_segments: Vec<[Point2; 2]>,
+    /// Geometrically subdivided cut/crease segments. Unlike logical operation
+    /// paths, these contain intersection vertices needed by graph interchange.
+    pub segments: Vec<FlatPatternSegment>,
     pub operations: Vec<FlatPatternOperation>,
     pub bounds: PatternBounds,
 }
@@ -363,6 +374,16 @@ impl PaperModel {
 
         Ok(FlatPatternSnapshot {
             boundary_segments,
+            segments: self
+                .seams
+                .iter()
+                .map(|seam| FlatPatternSegment {
+                    operation: seam.operation,
+                    kind: seam.kind,
+                    start: seam.start,
+                    end: seam.end,
+                })
+                .collect(),
             operations: self
                 .operations
                 .iter()
@@ -1539,6 +1560,23 @@ mod tests {
         assert_eq!(pattern.bounds.min, Point2::new(-1.0, -0.5));
         assert_eq!(pattern.bounds.max, Point2::new(1.0, 0.5));
         assert_eq!(pattern.operations.len(), 2);
+        assert_eq!(pattern.segments.len(), 4);
+        assert_eq!(
+            pattern
+                .segments
+                .iter()
+                .filter(|segment| segment.kind == OperationKind::Crease)
+                .count(),
+            2
+        );
+        assert_eq!(
+            pattern
+                .segments
+                .iter()
+                .filter(|segment| segment.kind == OperationKind::Cut)
+                .count(),
+            2
+        );
         assert_eq!(pattern.operations[0].id, crease);
         assert_eq!(pattern.operations[0].kind, OperationKind::Crease);
         assert_eq!(pattern.operations[1].id, cut);
