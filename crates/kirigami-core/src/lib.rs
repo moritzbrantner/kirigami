@@ -1607,12 +1607,12 @@ mod tests {
             2
         );
         let resolved = model
-            .resolve_fold(FoldRequest {
+            .resolve_folds(&[FoldRequest {
                 operation: horizontal,
                 angle_radians: std::f32::consts::FRAC_PI_2,
-            })
+            }])
             .unwrap();
-        assert_eq!(resolved.moving_panels.len(), 2);
+        assert_eq!(resolved[0].moving_panels.len(), 2);
         let snapshot = model
             .render_snapshot(Some(FoldRequest {
                 operation: horizontal,
