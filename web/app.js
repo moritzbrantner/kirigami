@@ -73,7 +73,7 @@ function clearCanvas() {
 function renderPaper() {
   const currentMode = mode.value;
   const currentAngle = Number(angle.value);
-  angle.disabled = currentMode !== "crease";
+  angle.disabled = currentMode !== "crease" && currentMode !== "accordion";
   angleOutput.value = `${currentAngle}°`;
 
   const snapshot = JSON.parse(demo_snapshot(currentAngle, currentMode));
