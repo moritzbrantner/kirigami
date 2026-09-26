@@ -4,6 +4,7 @@
 //! `FlatPatternSnapshot` into portable print/vector formats.
 
 use kirigami_core::{FlatPatternSnapshot, OperationKind, Point2};
+use serde::Serialize;
 use std::fmt;
 
 const POINTS_PER_MM: f32 = 72.0 / 25.4;
@@ -36,6 +37,7 @@ pub enum ExportError {
     InvalidTemplateWidth,
     DegeneratePattern,
     TemplateDoesNotFit { width_mm: f32, height_mm: f32 },
+    Serialization(String),
 }
 
 impl fmt::Display for ExportError {
@@ -58,6 +60,7 @@ impl fmt::Display for ExportError {
                 formatter,
                 "template size {width_mm:.1} x {height_mm:.1} mm does not fit the printable page area"
             ),
+            Self::Serialization(error) => write!(formatter, "could not serialize export: {error}"),
         }
     }
 }
@@ -158,6 +161,138 @@ pub fn export_svg(
     }
     svg.push_str("    </g>\n  </g>\n</svg>\n");
     Ok(svg)
+}
+
+
+#[derive(Debug, Serialize)]
+struct FoldDocument {
+    file_spec: f32,
+    file_creator: &'static str,
+    file_classes: [&'static str; 1],
+    frame_classes: [&'static str; 1],
+    frame_attributes: Vec<&'static str>,
+    frame_unit: &'static str,
+    vertices_coords: Vec<[f32; 2]>,
+    edges_vertices: Vec<[u32; 2]>,
+    edges_assignment: Vec<&'static str>,
+}
+
+/// Exports a FOLD 1.2 crease-pattern graph at an explicit physical width.
+///
+/// External material boundaries use `B`, cuts use the FOLD 1.2 `C`
+/// assignment, and creases remain `U` until Kirigami owns an explicit
+/// mountain/valley assignment. Geometrically subdivided seam segments are
+/// used so crossing operations retain their intersection vertices.
+pub fn export_fold(
+    pattern: &FlatPatternSnapshot,
+    template_width_mm: f32,
+) -> Result<String, ExportError> {
+    if !template_width_mm.is_finite() || template_width_mm <= 0.0 {
+        return Err(ExportError::InvalidTemplateWidth);
+    }
+    let source_width = pattern.bounds.max.x - pattern.bounds.min.x;
+    let source_height = pattern.bounds.max.y - pattern.bounds.min.y;
+    if source_width <= EPSILON || source_height <= EPSILON {
+        return Err(ExportError::DegeneratePattern);
+    }
+
+    let scale = template_width_mm / source_width;
+    let mut vertices = Vec::<[f32; 2]>::new();
+    let mut edges_vertices = Vec::new();
+    let mut edges_assignment = Vec::new();
+
+    for segment in &pattern.boundary_segments {
+        push_fold_edge(
+            &mut vertices,
+            &mut edges_vertices,
+            &mut edges_assignment,
+            pattern,
+            scale,
+            segment[0],
+            segment[1],
+            "B",
+        )?;
+    }
+    for segment in &pattern.segments {
+        let assignment = match segment.kind {
+            OperationKind::Cut => "C",
+            OperationKind::Crease => "U",
+        };
+        push_fold_edge(
+            &mut vertices,
+            &mut edges_vertices,
+            &mut edges_assignment,
+            pattern,
+            scale,
+            segment.start,
+            segment.end,
+            assignment,
+        )?;
+    }
+
+    let mut frame_attributes = vec!["2D"];
+    if pattern
+        .segments
+        .iter()
+        .any(|segment| segment.kind == OperationKind::Cut)
+    {
+        frame_attributes.push("cuts");
+    }
+
+    serde_json::to_string_pretty(&FoldDocument {
+        file_spec: 1.2,
+        file_creator: "kirigami",
+        file_classes: ["singleModel"],
+        frame_classes: ["creasePattern"],
+        frame_attributes,
+        frame_unit: "mm",
+        vertices_coords: vertices,
+        edges_vertices,
+        edges_assignment,
+    })
+    .map(|json| format!("{json}\n"))
+    .map_err(|error| ExportError::Serialization(error.to_string()))
+}
+
+fn push_fold_edge(
+    vertices: &mut Vec<[f32; 2]>,
+    edges: &mut Vec<[u32; 2]>,
+    assignments: &mut Vec<&'static str>,
+    pattern: &FlatPatternSnapshot,
+    scale: f32,
+    start: Point2,
+    end: Point2,
+    assignment: &'static str,
+) -> Result<(), ExportError> {
+    let start = fold_point(pattern, scale, start);
+    let end = fold_point(pattern, scale, end);
+    let start = fold_vertex_id(vertices, start)?;
+    let end = fold_vertex_id(vertices, end)?;
+    edges.push([start, end]);
+    assignments.push(assignment);
+    Ok(())
+}
+
+fn fold_vertex_id(vertices: &mut Vec<[f32; 2]>, point: [f32; 2]) -> Result<u32, ExportError> {
+    if let Some(index) = vertices.iter().position(|candidate| {
+        (candidate[0] - point[0]).abs() <= EPSILON
+            && (candidate[1] - point[1]).abs() <= EPSILON
+    }) {
+        return u32::try_from(index)
+            .map_err(|error| ExportError::Serialization(error.to_string()));
+    }
+
+    let index = u32::try_from(vertices.len())
+        .map_err(|error| ExportError::Serialization(error.to_string()))?;
+    vertices.push(point);
+    Ok(index)
+}
+
+fn fold_point(pattern: &FlatPatternSnapshot, scale: f32, point: Point2) -> [f32; 2] {
+    [
+        (point.x - pattern.bounds.min.x) * scale,
+        (point.y - pattern.bounds.min.y) * scale,
+    ]
 }
 
 fn layout(pattern: &FlatPatternSnapshot, options: PdfExportOptions) -> Result<Layout, ExportError> {
@@ -379,4 +514,69 @@ mod tests {
             Err(ExportError::TemplateDoesNotFit { .. })
         ));
     }
+    #[test]
+    fn fold_export_preserves_crossing_vertices_and_unassigned_creases() {
+        let mut model = PaperModel::rectangle(2.0, 2.0).unwrap();
+        model
+            .split_across_panels_with_polyline(
+                &[Point2::new(0.0, -1.0), Point2::new(0.0, 1.0)],
+                OperationKind::Crease,
+            )
+            .unwrap();
+        model
+            .split_across_panels_with_polyline(
+                &[Point2::new(-1.0, 0.0), Point2::new(1.0, 0.0)],
+                OperationKind::Crease,
+            )
+            .unwrap();
+
+        let fold = export_fold(&model.flat_pattern_snapshot().unwrap(), 180.0).unwrap();
+        let document: serde_json::Value = serde_json::from_str(&fold).unwrap();
+        assert_eq!(document["file_spec"], 1.2);
+        assert_eq!(document["frame_unit"], "mm");
+        assert_eq!(document["frame_classes"][0], "creasePattern");
+        let vertices = document["vertices_coords"].as_array().unwrap();
+        assert!(vertices.iter().any(|vertex| {
+            vertex[0].as_f64() == Some(90.0) && vertex[1].as_f64() == Some(90.0)
+        }));
+        let assignments = document["edges_assignment"].as_array().unwrap();
+        assert_eq!(
+            assignments
+                .iter()
+                .filter(|assignment| assignment.as_str() == Some("U"))
+                .count(),
+            4
+        );
+    }
+
+    #[test]
+    fn fold_export_marks_kirigami_cuts_with_fold_1_2_cut_assignment() {
+        let mut model = PaperModel::rectangle(2.0, 1.0).unwrap();
+        model
+            .split_panel_with_segment(
+                PanelId(0),
+                Point2::new(0.0, -0.5),
+                Point2::new(0.0, 0.5),
+                OperationKind::Cut,
+            )
+            .unwrap();
+
+        let fold = export_fold(&model.flat_pattern_snapshot().unwrap(), 180.0).unwrap();
+        let document: serde_json::Value = serde_json::from_str(&fold).unwrap();
+        assert!(
+            document["frame_attributes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|attribute| attribute.as_str() == Some("cuts"))
+        );
+        assert!(
+            document["edges_assignment"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|assignment| assignment.as_str() == Some("C"))
+        );
+    }
+
 }
