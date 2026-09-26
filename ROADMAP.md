@@ -26,6 +26,7 @@
 - Cuts that split connected components.
 - Creases that preserve connectivity.
 - Deterministic rigid rotation around a crease axis.
+- Deterministic multi-crease fold states for straight creases, with canonical operation ordering, world-space hinge propagation, and fail-closed detection when an earlier fold kinks a later rigid crease.
 - Renderer-neutral immutable snapshots plus `three-d-core::Mesh` conversion.
 - Rust/WASM browser proof and GitHub Pages deployment.
 - Browser upload for OBJ/glTF/GLB mesh targets and JSON skeleton targets, normalized outside `kirigami-core` through pinned `3d-lab` format, mesh, and animation contracts.
@@ -34,7 +35,7 @@
 ## Next vertical slices
 
 1. Upgrade rendering/physics triangulation to constrained Delaunay when mesh quality requires it; the authoritative boundary graph remains independent of the triangulator.
-2. Add multi-crease fold state and constraint propagation so genuinely bent creases have an authoritative solver. Use the physics engine only for material/mechanical behavior, never as the authority for crease meaning.
+2. Extend the fold constraint solver from rigid straight multi-crease states to crossing and genuinely bent creases. Use the physics engine only for material/mechanical behavior, never as the authority for crease meaning.
 3. Add first-party 3D rendering through the shared `3d-lab` renderer seam while retaining the lightweight Canvas renderer as a deterministic fallback/acceptance surface.
 4. Add layer ordering and flat-foldability validation.
 5. Add SVG/FOLD import/export and deterministic pattern fixtures.
@@ -43,7 +44,7 @@
 
 ## Algorithm priorities
 
-Closed-path/hole arrangement, multiple boundary loops, and boundary bridges are part of the deterministic topology foundation. Self-intersection reuses the pinned `rust-kernels` static BVH for deterministic candidate pruning and generic GJK convex-hull queries for triangle tests. Adjacent panels are now included: a second deterministic GJK pass over slightly inset triangles removes legal boundary-only contact without hiding interior overlap. The next algorithm work is constrained triangulation and multi-crease constraint solving.
+Closed-path/hole arrangement, multiple boundary loops, and boundary bridges are part of the deterministic topology foundation. Self-intersection reuses the pinned `rust-kernels` static BVH for deterministic candidate pruning and generic GJK convex-hull queries for triangle tests. Adjacent panels are now included: a second deterministic GJK pass over slightly inset triangles removes legal boundary-only contact without hiding interior overlap. The next algorithm work is constrained triangulation and extending the deterministic fold solver to crossing/bent crease constraints.
 
 
 ## 3D target approximation
