@@ -739,7 +739,6 @@ impl PaperModel {
                 self.transformed_operation_axis(operation.id, &resolved)?;
 
             resolved.push(ResolvedFold {
-                operation: operation.id,
                 axis_start,
                 axis_end,
                 angle_radians: request.angle_radians,
@@ -918,7 +917,6 @@ impl fmt::Display for MeshBuildError {
 impl std::error::Error for MeshBuildError {}
 
 struct ResolvedFold {
-    operation: OperationId,
     axis_start: Vec3,
     axis_end: Vec3,
     angle_radians: f32,
