@@ -1,9 +1,51 @@
 use kirigami_core::{FoldRequest, OperationKind, PanelId, PaperModel, Point2};
+use kirigami_export::{PdfExportOptions, export_pdf, export_svg};
 use kirigami_targets::load_target;
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
 pub fn demo_snapshot(angle_degrees: f32, mode: &str) -> Result<String, JsValue> {
+    let (model, folds) = build_demo(angle_degrees, mode)?;
+    let snapshot = model.render_snapshot_with_folds(&folds).map_err(js_error)?;
+    serde_json::to_string(&snapshot).map_err(js_error)
+}
+
+#[wasm_bindgen]
+pub fn demo_pdf(
+    mode: &str,
+    template_width_mm: f32,
+    page_width_mm: f32,
+    page_height_mm: f32,
+) -> Result<Vec<u8>, JsValue> {
+    let (model, _) = build_demo(0.0, mode)?;
+    let pattern = model.flat_pattern_snapshot().map_err(js_error)?;
+    export_pdf(
+        &pattern,
+        PdfExportOptions {
+            page_width_mm,
+            page_height_mm,
+            margin_mm: 10.0,
+            template_width_mm,
+        },
+    )
+    .map_err(js_error)
+}
+
+#[wasm_bindgen]
+pub fn demo_svg(mode: &str, template_width_mm: f32) -> Result<String, JsValue> {
+    let (model, _) = build_demo(0.0, mode)?;
+    let pattern = model.flat_pattern_snapshot().map_err(js_error)?;
+    export_svg(&pattern, template_width_mm).map_err(js_error)
+}
+
+#[wasm_bindgen]
+pub fn target_snapshot(file_name: &str, bytes: &[u8]) -> Result<String, JsValue> {
+    let target = load_target(file_name, bytes).map_err(js_error)?;
+    let snapshot = target.snapshot().map_err(js_error)?;
+    serde_json::to_string(&snapshot).map_err(js_error)
+}
+
+fn build_demo(angle_degrees: f32, mode: &str) -> Result<(PaperModel, Vec<FoldRequest>), JsValue> {
     let mut model = PaperModel::rectangle(2.4, 1.5).map_err(js_error)?;
     let folds = match mode {
         "crease" => {
@@ -95,15 +137,7 @@ pub fn demo_snapshot(angle_degrees: f32, mode: &str) -> Result<String, JsValue> 
             ));
         }
     };
-    let snapshot = model.render_snapshot_with_folds(&folds).map_err(js_error)?;
-    serde_json::to_string(&snapshot).map_err(js_error)
-}
-
-#[wasm_bindgen]
-pub fn target_snapshot(file_name: &str, bytes: &[u8]) -> Result<String, JsValue> {
-    let target = load_target(file_name, bytes).map_err(js_error)?;
-    let snapshot = target.snapshot().map_err(js_error)?;
-    serde_json::to_string(&snapshot).map_err(js_error)
+    Ok((model, folds))
 }
 
 fn js_error(error: impl std::fmt::Display) -> JsValue {
