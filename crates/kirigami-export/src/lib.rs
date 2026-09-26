@@ -195,10 +195,7 @@ pub fn export_fold(
         return Err(ExportError::DegeneratePattern);
     }
 
-    let mut graph = FoldGraphBuilder::new(
-        pattern.bounds.min,
-        template_width_mm / source_width,
-    );
+    let mut graph = FoldGraphBuilder::new(pattern.bounds.min, template_width_mm / source_width);
     for segment in &pattern.boundary_segments {
         graph.push_edge(segment[0], segment[1], "B")?;
     }
@@ -277,8 +274,7 @@ impl FoldGraphBuilder {
 
     fn vertex_id(&mut self, point: [f32; 2]) -> Result<u32, ExportError> {
         if let Some(index) = self.vertices.iter().position(|candidate| {
-            (candidate[0] - point[0]).abs() <= EPSILON
-                && (candidate[1] - point[1]).abs() <= EPSILON
+            (candidate[0] - point[0]).abs() <= EPSILON && (candidate[1] - point[1]).abs() <= EPSILON
         }) {
             return u32::try_from(index)
                 .map_err(|error| ExportError::Serialization(error.to_string()));
