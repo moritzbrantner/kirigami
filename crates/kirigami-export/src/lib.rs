@@ -66,12 +66,9 @@ impl std::error::Error for ExportError {}
 #[derive(Debug, Clone, Copy)]
 struct Layout {
     source_min: Point2,
-    source_max: Point2,
     scale_mm_per_unit: f32,
     offset_x_mm: f32,
     offset_y_mm: f32,
-    width_mm: f32,
-    height_mm: f32,
 }
 
 pub fn export_pdf(
@@ -202,12 +199,9 @@ fn layout(
 
     Ok(Layout {
         source_min: pattern.bounds.min,
-        source_max: pattern.bounds.max,
         scale_mm_per_unit,
         offset_x_mm: (options.page_width_mm - width_mm) * 0.5,
         offset_y_mm: (options.page_height_mm - height_mm) * 0.5,
-        width_mm,
-        height_mm,
     })
 }
 
