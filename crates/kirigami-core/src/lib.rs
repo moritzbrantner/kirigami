@@ -685,10 +685,7 @@ impl PaperModel {
         }
     }
 
-    pub fn three_d_mesh_with_folds(
-        &self,
-        folds: &[FoldRequest],
-    ) -> Result<Mesh, MeshBuildError> {
+    pub fn three_d_mesh_with_folds(&self, folds: &[FoldRequest]) -> Result<Mesh, MeshBuildError> {
         let snapshot = self
             .render_snapshot_with_folds(folds)
             .map_err(MeshBuildError::Model)?;
@@ -1363,7 +1360,10 @@ mod tests {
         assert_eq!(forward, reverse);
         assert!(forward.vertices.iter().any(|vertex| vertex[2].abs() > 0.25));
         assert_eq!(
-            model.three_d_mesh_with_folds(&folds).unwrap().triangle_count(),
+            model
+                .three_d_mesh_with_folds(&folds)
+                .unwrap()
+                .triangle_count(),
             6
         );
     }
