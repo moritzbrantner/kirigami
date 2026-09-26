@@ -11,6 +11,12 @@ pub fn demo_snapshot(angle_degrees: f32, mode: &str) -> Result<String, JsValue> 
 }
 
 #[wasm_bindgen]
+pub fn demo_flat_foldability(mode: &str) -> Result<String, JsValue> {
+    let (model, _) = build_demo(0.0, mode)?;
+    serde_json::to_string(&model.local_flat_foldability_report()).map_err(js_error)
+}
+
+#[wasm_bindgen]
 pub fn demo_pdf(
     mode: &str,
     template_width_mm: f32,
@@ -61,6 +67,21 @@ fn build_demo(angle_degrees: f32, mode: &str) -> Result<(PaperModel, Vec<FoldReq
                 operation,
                 angle_radians: angle_degrees.to_radians(),
             }]
+        }
+        "crossing" => {
+            model
+                .split_across_panels_with_polyline(
+                    &[Point2::new(0.0, -0.75), Point2::new(0.0, 0.75)],
+                    OperationKind::Crease,
+                )
+                .map_err(js_error)?;
+            model
+                .split_across_panels_with_polyline(
+                    &[Point2::new(-1.2, 0.0), Point2::new(1.2, 0.0)],
+                    OperationKind::Crease,
+                )
+                .map_err(js_error)?;
+            Vec::new()
         }
         "cut" => {
             model
@@ -133,7 +154,7 @@ fn build_demo(angle_degrees: f32, mode: &str) -> Result<(PaperModel, Vec<FoldReq
         }
         _ => {
             return Err(JsValue::from_str(
-                "mode must be 'crease', 'cut', 'hole', 'bridge', or 'accordion'",
+                "mode must be 'crease', 'accordion', 'crossing', 'cut', 'hole', or 'bridge'",
             ));
         }
     };
