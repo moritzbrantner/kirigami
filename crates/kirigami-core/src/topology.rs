@@ -198,6 +198,23 @@ impl PlanarTopology {
         self.half_edges.len()
     }
 
+    /// Returns the geometric material boundary as deterministic directed segments.
+    ///
+    /// Internal cut/crease subdivision edges always have twins. Twin-less half-edges
+    /// are therefore the original external sheet boundary even after later operations
+    /// subdivide it.
+    pub fn external_boundary_segments(&self) -> Vec<[Point2; 2]> {
+        self.half_edges
+            .iter()
+            .filter(|edge| edge.twin.is_none())
+            .map(|edge| {
+                let start = self.vertex(edge.origin).point;
+                let end = self.vertex(self.edge(edge.next).origin).point;
+                [start, end]
+            })
+            .collect()
+    }
+
     pub fn boundary_component_count(&self, face: FaceId) -> Result<usize, TopologyError> {
         let face = self.face(face)?;
         Ok(face.holes.len() + 1)

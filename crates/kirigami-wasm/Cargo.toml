@@ -10,6 +10,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 kirigami-core = { path = "../kirigami-core" }
+kirigami-export = { path = "../kirigami-export" }
 kirigami-targets = { path = "../kirigami-targets" }
 serde_json.workspace = true
 wasm-bindgen.workspace = true

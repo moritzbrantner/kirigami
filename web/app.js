@@ -1,4 +1,4 @@
-import init, { demo_snapshot, target_snapshot } from "./pkg/kirigami_wasm.js";
+import init, { demo_pdf, demo_snapshot, demo_svg, target_snapshot } from "./pkg/kirigami_wasm.js";
 
 const canvas = document.querySelector("#canvas");
 const context = canvas.getContext("2d");
@@ -9,6 +9,11 @@ const status = document.querySelector("#status");
 const targetFile = document.querySelector("#target-file");
 const targetStatus = document.querySelector("#target-status");
 const clearTarget = document.querySelector("#clear-target");
+const exportPage = document.querySelector("#export-page");
+const exportWidth = document.querySelector("#export-width");
+const exportPdf = document.querySelector("#export-pdf");
+const exportSvg = document.querySelector("#export-svg");
+const exportStatus = document.querySelector("#export-status");
 
 const MAX_PREVIEW_TRIANGLES = 25000;
 let activeTarget = null;
@@ -204,6 +209,61 @@ clearTarget.addEventListener("click", () => {
   targetStatus.textContent = "No target loaded.";
   clearTarget.disabled = true;
   render();
+});
+
+function selectedPageSize() {
+  switch (exportPage.value) {
+    case "a4-landscape":
+      return [297, 210];
+    case "letter-portrait":
+      return [215.9, 279.4];
+    case "letter-landscape":
+      return [279.4, 215.9];
+    default:
+      return [210, 297];
+  }
+}
+
+function templateWidthMm() {
+  const width = Number(exportWidth.value);
+  if (!Number.isFinite(width) || width <= 0) {
+    throw new Error("Template width must be a positive number.");
+  }
+  return width;
+}
+
+function downloadBlob(content, type, extension) {
+  const url = URL.createObjectURL(new Blob([content], { type }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `kirigami-${mode.value}-${templateWidthMm()}mm.${extension}`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+exportPdf.addEventListener("click", () => {
+  try {
+    const width = templateWidthMm();
+    const [pageWidth, pageHeight] = selectedPageSize();
+    const bytes = demo_pdf(mode.value, width, pageWidth, pageHeight);
+    downloadBlob(bytes, "application/pdf", "pdf");
+    exportStatus.textContent = `PDF · ${width} mm wide`;
+  } catch (error) {
+    exportStatus.textContent = error instanceof Error ? error.message : String(error);
+  }
+});
+
+exportSvg.addEventListener("click", () => {
+  try {
+    const width = templateWidthMm();
+    const svg = demo_svg(mode.value, width);
+    downloadBlob(svg, "image/svg+xml;charset=utf-8", "svg");
+    exportStatus.textContent = `SVG · ${width} mm wide`;
+  } catch (error) {
+    exportStatus.textContent = error instanceof Error ? error.message : String(error);
+  }
 });
 
 mode.addEventListener("change", render);

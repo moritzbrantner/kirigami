@@ -118,6 +118,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "kirigami-export"
+version = "0.1.0"
+dependencies = [
+ "kirigami-core",
+]
+
+[[package]]
 name = "kirigami-targets"
 version = "0.1.0"
 dependencies = [
@@ -134,6 +141,7 @@ name = "kirigami-wasm"
 version = "0.1.0"
 dependencies = [
  "kirigami-core",
+ "kirigami-export",
  "kirigami-targets",
  "serde_json",
  "wasm-bindgen",

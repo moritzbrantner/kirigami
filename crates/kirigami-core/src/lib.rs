@@ -118,6 +118,28 @@ pub struct RenderSnapshot {
     pub component_count: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct PatternBounds {
+    pub min: Point2,
+    pub max: Point2,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct FlatPatternOperation {
+    pub id: OperationId,
+    pub kind: OperationKind,
+    pub path: Vec<Point2>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct FlatPatternSnapshot {
+    /// External material boundary. Cut and crease paths remain separate semantic
+    /// operations so exporters never infer paper meaning from topology adjacency.
+    pub boundary_segments: Vec<[Point2; 2]>,
+    pub operations: Vec<FlatPatternOperation>,
+    pub bounds: PatternBounds,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SelfIntersectionScope {
@@ -277,6 +299,38 @@ impl PaperModel {
 
     pub fn seams(&self) -> &[Seam] {
         &self.seams
+    }
+
+    pub fn flat_pattern_snapshot(&self) -> Result<FlatPatternSnapshot, ModelError> {
+        let boundary_segments = self.topology.external_boundary_segments();
+        let first = boundary_segments
+            .first()
+            .map(|segment| segment[0])
+            .ok_or(ModelError::Topology(TopologyError::InvalidTopology))?;
+        let mut min = first;
+        let mut max = first;
+        for segment in &boundary_segments {
+            for point in segment {
+                min.x = min.x.min(point.x);
+                min.y = min.y.min(point.y);
+                max.x = max.x.max(point.x);
+                max.y = max.y.max(point.y);
+            }
+        }
+
+        Ok(FlatPatternSnapshot {
+            boundary_segments,
+            operations: self
+                .operations
+                .iter()
+                .map(|operation| FlatPatternOperation {
+                    id: operation.id,
+                    kind: operation.kind,
+                    path: operation.path.clone(),
+                })
+                .collect(),
+            bounds: PatternBounds { min, max },
+        })
     }
 
     pub fn component_count(&self) -> usize {
@@ -1288,6 +1342,43 @@ mod tests {
             )
             .unwrap();
         (model, operation)
+    }
+
+    #[test]
+    fn flat_pattern_keeps_external_boundary_and_logical_operation_paths() {
+        let mut model = PaperModel::rectangle(2.0, 1.0).unwrap();
+        let crease = model
+            .split_panel_with_segment(
+                PanelId(0),
+                Point2::new(0.0, -0.5),
+                Point2::new(0.0, 0.5),
+                OperationKind::Crease,
+            )
+            .unwrap();
+        let cut = model
+            .split_across_panels_with_polyline(
+                &[Point2::new(-1.0, 0.0), Point2::new(1.0, 0.0)],
+                OperationKind::Cut,
+            )
+            .unwrap();
+
+        let pattern = model.flat_pattern_snapshot().unwrap();
+        assert_eq!(pattern.bounds.min, Point2::new(-1.0, -0.5));
+        assert_eq!(pattern.bounds.max, Point2::new(1.0, 0.5));
+        assert_eq!(pattern.operations.len(), 2);
+        assert_eq!(pattern.operations[0].id, crease);
+        assert_eq!(pattern.operations[0].kind, OperationKind::Crease);
+        assert_eq!(pattern.operations[1].id, cut);
+        assert_eq!(pattern.operations[1].kind, OperationKind::Cut);
+        assert!(
+            pattern
+                .boundary_segments
+                .iter()
+                .all(|segment| segment[0].x.abs() == 1.0
+                    || segment[0].y.abs() == 0.5
+                    || segment[1].x.abs() == 1.0
+                    || segment[1].y.abs() == 0.5)
+        );
     }
 
     #[test]

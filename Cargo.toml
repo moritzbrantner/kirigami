@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/kirigami-core",
+    "crates/kirigami-export",
     "crates/kirigami-targets",
     "crates/kirigami-wasm",
 ]
