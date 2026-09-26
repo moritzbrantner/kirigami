@@ -161,6 +161,8 @@ pub enum ModelError {
     DegenerateSegment,
     InvalidPath,
     BentCreaseRequiresConstraintSolver,
+    DuplicateFoldOperation(OperationId),
+    FoldConstraintConflict(OperationId),
     UnknownPanel(PanelId),
     UnknownOperation(OperationId),
     SegmentEndpointOffBoundary,
@@ -186,6 +188,16 @@ impl fmt::Display for ModelError {
             Self::InvalidPath => formatter.write_str("a path requires at least two finite points"),
             Self::BentCreaseRequiresConstraintSolver => formatter
                 .write_str("a non-straight crease requires the multi-crease constraint solver"),
+            Self::DuplicateFoldOperation(operation) => write!(
+                formatter,
+                "fold operation {} was requested more than once",
+                operation.0
+            ),
+            Self::FoldConstraintConflict(operation) => write!(
+                formatter,
+                "fold operation {} cannot be satisfied by the current rigid crease state",
+                operation.0
+            ),
             Self::UnknownPanel(panel) => write!(formatter, "unknown panel {}", panel.0),
             Self::UnknownOperation(operation) => {
                 write!(formatter, "unknown operation {}", operation.0)
@@ -545,10 +557,24 @@ impl PaperModel {
     }
 
     pub fn render_snapshot(&self, fold: Option<FoldRequest>) -> Result<RenderSnapshot, ModelError> {
-        let fold_state = match fold {
-            Some(request) => Some(self.resolve_fold(request)?),
-            None => None,
-        };
+        match fold {
+            Some(request) => self.render_snapshot_with_folds(&[request]),
+            None => self.render_snapshot_with_folds(&[]),
+        }
+    }
+
+    /// Renders a deterministic multi-crease fold state.
+    ///
+    /// Fold requests are canonicalized by operation identity so callers cannot change the
+    /// result by reordering the same state. Each later hinge is resolved in world space after
+    /// the earlier canonical folds. If those folds make a requested straight crease non-rigid
+    /// (for example, a crossing crease becomes kinked), the state fails closed rather than
+    /// inventing a physically inconsistent axis.
+    pub fn render_snapshot_with_folds(
+        &self,
+        folds: &[FoldRequest],
+    ) -> Result<RenderSnapshot, ModelError> {
+        let fold_states = self.resolve_folds(folds)?;
         let mut vertices = Vec::new();
         let mut indices = Vec::new();
         let mut triangle_panels = Vec::new();
@@ -556,15 +582,12 @@ impl PaperModel {
         for panel in &self.panels {
             let triangulation = self.topology.triangulate_face(panel.face)?;
             let panel_start = vertices.len();
-            let should_rotate = fold_state
-                .as_ref()
-                .is_some_and(|state| state.moving_panels.contains(&panel.id));
             for point in triangulation.vertices {
-                let mut point_3d = Vec3::new(point.x, point.y, 0.0);
-                if should_rotate {
-                    let state = fold_state.as_ref().expect("fold state checked above");
-                    point_3d = state.transform(point_3d);
-                }
+                let point_3d = Self::transform_point_for_panel(
+                    &fold_states,
+                    panel.id,
+                    Vec3::new(point.x, point.y, 0.0),
+                );
                 vertices.push([point_3d.x, point_3d.y, point_3d.z]);
             }
             for triangle in triangulation.triangles {
@@ -585,17 +608,16 @@ impl PaperModel {
             .seams
             .iter()
             .map(|seam| {
-                let mut start = Vec3::new(seam.start.x, seam.start.y, 0.0);
-                let mut end = Vec3::new(seam.end.x, seam.end.y, 0.0);
-                if let Some(state) = &fold_state {
-                    let seam_moves = seam.operation != state.operation
-                        && state.moving_panels.contains(&seam.panel_a)
-                        && state.moving_panels.contains(&seam.panel_b);
-                    if seam_moves {
-                        start = state.transform(start);
-                        end = state.transform(end);
-                    }
-                }
+                let start = Self::transform_point_for_panel(
+                    &fold_states,
+                    seam.panel_a,
+                    Vec3::new(seam.start.x, seam.start.y, 0.0),
+                );
+                let end = Self::transform_point_for_panel(
+                    &fold_states,
+                    seam.panel_a,
+                    Vec3::new(seam.end.x, seam.end.y, 0.0),
+                );
                 RenderSeam {
                     operation: seam.operation,
                     kind: seam.kind,
@@ -622,7 +644,17 @@ impl PaperModel {
         &self,
         fold: Option<FoldRequest>,
     ) -> Result<SelfIntersectionReport, ModelError> {
-        let snapshot = self.render_snapshot(fold)?;
+        match fold {
+            Some(request) => self.self_intersection_report_with_folds(&[request]),
+            None => self.self_intersection_report_with_folds(&[]),
+        }
+    }
+
+    pub fn self_intersection_report_with_folds(
+        &self,
+        folds: &[FoldRequest],
+    ) -> Result<SelfIntersectionReport, ModelError> {
+        let snapshot = self.render_snapshot_with_folds(folds)?;
         let intentional_contacts = self.intentional_contact_pairs()?;
         analyze_self_intersections(&snapshot, &intentional_contacts)
     }
@@ -647,7 +679,16 @@ impl PaperModel {
     }
 
     pub fn three_d_mesh(&self, fold: Option<FoldRequest>) -> Result<Mesh, MeshBuildError> {
-        let snapshot = self.render_snapshot(fold).map_err(MeshBuildError::Model)?;
+        match fold {
+            Some(request) => self.three_d_mesh_with_folds(&[request]),
+            None => self.three_d_mesh_with_folds(&[]),
+        }
+    }
+
+    pub fn three_d_mesh_with_folds(&self, folds: &[FoldRequest]) -> Result<Mesh, MeshBuildError> {
+        let snapshot = self
+            .render_snapshot_with_folds(folds)
+            .map_err(MeshBuildError::Model)?;
         let vertices = snapshot
             .vertices
             .into_iter()
@@ -656,38 +697,100 @@ impl PaperModel {
         Mesh::new(vertices, snapshot.indices).map_err(MeshBuildError::Mesh)
     }
 
-    fn resolve_fold(&self, request: FoldRequest) -> Result<ResolvedFold, ModelError> {
-        if !request.angle_radians.is_finite() {
-            return Err(ModelError::NonFiniteFoldAngle);
+    fn resolve_folds(&self, requests: &[FoldRequest]) -> Result<Vec<ResolvedFold>, ModelError> {
+        let mut ordered = requests.to_vec();
+        ordered.sort_by_key(|request| request.operation.0);
+        if let Some(duplicate) = ordered
+            .windows(2)
+            .find(|pair| pair[0].operation == pair[1].operation)
+        {
+            return Err(ModelError::DuplicateFoldOperation(duplicate[0].operation));
         }
-        let operation = self
-            .operations
-            .iter()
-            .find(|operation| operation.id == request.operation)
-            .ok_or(ModelError::UnknownOperation(request.operation))?;
-        if operation.kind == OperationKind::Cut {
-            return Err(ModelError::CannotFoldCut(request.operation));
-        }
-        if !path_is_straight(&operation.path) {
-            return Err(ModelError::BentCreaseRequiresConstraintSolver);
-        }
-        let axis_start = operation.path[0];
-        let axis_end = *operation.path.last().expect("operation path validated");
 
-        let moving_seeds: HashSet<PanelId> = self
-            .seams
-            .iter()
-            .filter(|seam| seam.operation == operation.id)
-            .map(|seam| seam.panel_b)
-            .collect();
-        let moving_panels = self.connected_panels_without_operation(&moving_seeds, operation.id);
-        Ok(ResolvedFold {
-            operation: operation.id,
-            axis_start: Vec3::new(axis_start.x, axis_start.y, 0.0),
-            axis_end: Vec3::new(axis_end.x, axis_end.y, 0.0),
-            angle_radians: request.angle_radians,
-            moving_panels,
-        })
+        let mut resolved = Vec::with_capacity(ordered.len());
+        for request in ordered {
+            if !request.angle_radians.is_finite() {
+                return Err(ModelError::NonFiniteFoldAngle);
+            }
+            let operation = self
+                .operations
+                .iter()
+                .find(|operation| operation.id == request.operation)
+                .ok_or(ModelError::UnknownOperation(request.operation))?;
+            if operation.kind == OperationKind::Cut {
+                return Err(ModelError::CannotFoldCut(request.operation));
+            }
+            if !path_is_straight(&operation.path) {
+                return Err(ModelError::BentCreaseRequiresConstraintSolver);
+            }
+
+            let moving_seeds: HashSet<PanelId> = self
+                .seams
+                .iter()
+                .filter(|seam| seam.operation == operation.id)
+                .map(|seam| seam.panel_b)
+                .collect();
+            let moving_panels =
+                self.connected_panels_without_operation(&moving_seeds, operation.id);
+            let (axis_start, axis_end) =
+                self.transformed_operation_axis(operation.id, &resolved)?;
+
+            resolved.push(ResolvedFold {
+                axis_start,
+                axis_end,
+                angle_radians: request.angle_radians,
+                moving_panels,
+            });
+        }
+        Ok(resolved)
+    }
+
+    fn transformed_operation_axis(
+        &self,
+        operation: OperationId,
+        resolved: &[ResolvedFold],
+    ) -> Result<(Vec3, Vec3), ModelError> {
+        let mut axis = None;
+        let mut transformed_points = Vec::new();
+
+        for seam in self.seams.iter().filter(|seam| seam.operation == operation) {
+            let flat_start = Vec3::new(seam.start.x, seam.start.y, 0.0);
+            let flat_end = Vec3::new(seam.end.x, seam.end.y, 0.0);
+            let start_a = Self::transform_point_for_panel(resolved, seam.panel_a, flat_start);
+            let end_a = Self::transform_point_for_panel(resolved, seam.panel_a, flat_end);
+            let start_b = Self::transform_point_for_panel(resolved, seam.panel_b, flat_start);
+            let end_b = Self::transform_point_for_panel(resolved, seam.panel_b, flat_end);
+
+            if !points_near_3d(start_a, start_b) || !points_near_3d(end_a, end_b) {
+                return Err(ModelError::FoldConstraintConflict(operation));
+            }
+
+            axis.get_or_insert((start_a, end_a));
+            transformed_points.push(start_a);
+            transformed_points.push(end_a);
+        }
+
+        let (axis_start, axis_end) = axis.ok_or(ModelError::FoldConstraintConflict(operation))?;
+        if transformed_points
+            .into_iter()
+            .any(|point| !point_on_axis_3d(point, axis_start, axis_end))
+        {
+            return Err(ModelError::FoldConstraintConflict(operation));
+        }
+        Ok((axis_start, axis_end))
+    }
+
+    fn transform_point_for_panel(
+        resolved: &[ResolvedFold],
+        panel: PanelId,
+        mut point: Vec3,
+    ) -> Vec3 {
+        for fold in resolved {
+            if fold.moving_panels.contains(&panel) {
+                point = fold.transform(point);
+            }
+        }
+        point
     }
 
     fn connected_panels_without_operation(
@@ -811,7 +914,6 @@ impl fmt::Display for MeshBuildError {
 impl std::error::Error for MeshBuildError {}
 
 struct ResolvedFold {
-    operation: OperationId,
     axis_start: Vec3,
     axis_end: Vec3,
     angle_radians: f32,
@@ -1157,6 +1259,20 @@ fn rotate_around_axis(point: Vec3, axis_start: Vec3, axis_end: Vec3, angle: f32)
         + axis * (axis.dot(relative) * (1.0 - cosine))
 }
 
+fn points_near_3d(left: Vec3, right: Vec3) -> bool {
+    let delta = left - right;
+    delta.dot(delta) <= EPSILON * EPSILON * 16.0
+}
+
+fn point_on_axis_3d(point: Vec3, axis_start: Vec3, axis_end: Vec3) -> bool {
+    let Some(axis) = (axis_end - axis_start).normalized() else {
+        return false;
+    };
+    let offset = point - axis_start;
+    let perpendicular = offset - axis * axis.dot(offset);
+    perpendicular.dot(perpendicular) <= EPSILON * EPSILON * 16.0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1208,6 +1324,97 @@ mod tests {
         assert!(snapshot.vertices.iter().any(|vertex| vertex[2].abs() > 0.5));
         assert_eq!(snapshot.indices.len(), 12);
         assert_eq!(model.three_d_mesh(Some(fold)).unwrap().triangle_count(), 4);
+    }
+
+    #[test]
+    fn multiple_parallel_creases_propagate_deterministically() {
+        let mut model = PaperModel::rectangle(3.0, 1.0).unwrap();
+        let first = model
+            .split_across_panels_with_polyline(
+                &[Point2::new(-0.5, -0.5), Point2::new(-0.5, 0.5)],
+                OperationKind::Crease,
+            )
+            .unwrap();
+        let second = model
+            .split_across_panels_with_polyline(
+                &[Point2::new(0.5, -0.5), Point2::new(0.5, 0.5)],
+                OperationKind::Crease,
+            )
+            .unwrap();
+
+        let folds = [
+            FoldRequest {
+                operation: first,
+                angle_radians: 0.7,
+            },
+            FoldRequest {
+                operation: second,
+                angle_radians: -0.45,
+            },
+        ];
+        let forward = model.render_snapshot_with_folds(&folds).unwrap();
+        let reverse = model
+            .render_snapshot_with_folds(&[folds[1], folds[0]])
+            .unwrap();
+
+        assert_eq!(forward, reverse);
+        assert!(forward.vertices.iter().any(|vertex| vertex[2].abs() > 0.25));
+        assert_eq!(
+            model
+                .three_d_mesh_with_folds(&folds)
+                .unwrap()
+                .triangle_count(),
+            6
+        );
+    }
+
+    #[test]
+    fn crossing_crease_state_fails_closed_when_axis_becomes_kinked() {
+        let mut model = PaperModel::rectangle(2.0, 2.0).unwrap();
+        let vertical = model
+            .split_across_panels_with_polyline(
+                &[Point2::new(0.0, -1.0), Point2::new(0.0, 1.0)],
+                OperationKind::Crease,
+            )
+            .unwrap();
+        let horizontal = model
+            .split_across_panels_with_polyline(
+                &[Point2::new(-1.0, 0.0), Point2::new(1.0, 0.0)],
+                OperationKind::Crease,
+            )
+            .unwrap();
+
+        assert!(matches!(
+            model.render_snapshot_with_folds(&[
+                FoldRequest {
+                    operation: vertical,
+                    angle_radians: 0.6,
+                },
+                FoldRequest {
+                    operation: horizontal,
+                    angle_radians: 0.4,
+                },
+            ]),
+            Err(ModelError::FoldConstraintConflict(operation)) if operation == horizontal
+        ));
+    }
+
+    #[test]
+    fn duplicate_fold_requests_fail_closed() {
+        let (model, operation) = split(OperationKind::Crease);
+        assert!(matches!(
+            model.render_snapshot_with_folds(&[
+                FoldRequest {
+                    operation,
+                    angle_radians: 0.4,
+                },
+                FoldRequest {
+                    operation,
+                    angle_radians: 0.5,
+                },
+            ]),
+            Err(ModelError::DuplicateFoldOperation(duplicate)) if duplicate == operation
+        ));
     }
 
     #[test]
@@ -1400,12 +1607,12 @@ mod tests {
             2
         );
         let resolved = model
-            .resolve_fold(FoldRequest {
+            .resolve_folds(&[FoldRequest {
                 operation: horizontal,
                 angle_radians: std::f32::consts::FRAC_PI_2,
-            })
+            }])
             .unwrap();
-        assert_eq!(resolved.moving_panels.len(), 2);
+        assert_eq!(resolved[0].moving_panels.len(), 2);
         let snapshot = model
             .render_snapshot(Some(FoldRequest {
                 operation: horizontal,
