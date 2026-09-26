@@ -43,6 +43,27 @@
       <p id="status" class="status" aria-live="polite"></p>
     </section>
 
+    <section class="export-controls" aria-label="Print and vector export">
+      <label>
+        Page
+        <select id="export-page">
+          <option value="a4-portrait">A4 portrait</option>
+          <option value="a4-landscape">A4 landscape</option>
+          <option value="letter-portrait">Letter portrait</option>
+          <option value="letter-landscape">Letter landscape</option>
+        </select>
+      </label>
+      <label>
+        Template width (mm)
+        <input id="export-width" type="number" min="10" max="1000" step="1" value="180" inputmode="decimal" />
+      </label>
+      <div class="export-actions">
+        <button id="export-pdf" type="button">PDF</button>
+        <button id="export-svg" type="button">SVG</button>
+      </div>
+      <p id="export-status" class="status" aria-live="polite"></p>
+    </section>
+
     <section class="viewport" aria-label="Interactive paper or target preview">
       <canvas id="canvas"></canvas>
     </section>
