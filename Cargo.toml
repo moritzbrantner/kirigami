@@ -19,7 +19,7 @@ serde_json = "=1.0.151"
 earcut = "=0.4.11"
 wasm-bindgen = "=0.2.128"
 bvh-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "980091094a9826167a98b96781126595fbea5076" }
-geometry-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "980091094a9826167a98b96781126595fbea5076" }
+geometry-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "47bf14b512840a4e91159ae4ebdebc2708b5bdec" }
 spatial-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "980091094a9826167a98b96781126595fbea5076" }
 three-d-animation = { git = "https://github.com/moritzbrantner/3d-lab", rev = "419333a7ecedc94a99bfc6b940fbdbcfc7bec958", package = "three-d-animation" }
 three-d-assets = { git = "https://github.com/moritzbrantner/3d-lab", rev = "419333a7ecedc94a99bfc6b940fbdbcfc7bec958", package = "three-d-assets" }
