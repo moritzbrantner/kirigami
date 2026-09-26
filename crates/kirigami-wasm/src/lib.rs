@@ -1,5 +1,5 @@
 use kirigami_core::{FoldRequest, OperationKind, PanelId, PaperModel, Point2};
-use kirigami_export::{PdfExportOptions, export_pdf, export_svg};
+use kirigami_export::{PdfExportOptions, export_fold, export_pdf, export_svg};
 use kirigami_targets::load_target;
 use wasm_bindgen::prelude::*;
 
@@ -35,6 +35,13 @@ pub fn demo_pdf(
         },
     )
     .map_err(js_error)
+}
+
+#[wasm_bindgen]
+pub fn demo_fold(mode: &str, template_width_mm: f32) -> Result<String, JsValue> {
+    let (model, _) = build_demo(0.0, mode)?;
+    let pattern = model.flat_pattern_snapshot().map_err(js_error)?;
+    export_fold(&pattern, template_width_mm).map_err(js_error)
 }
 
 #[wasm_bindgen]
