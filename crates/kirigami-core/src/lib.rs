@@ -447,11 +447,7 @@ impl PaperModel {
         }
     }
 
-    fn point_on_material_boundary(
-        &self,
-        point: Point2,
-        external_boundary: &[[Point2; 2]],
-    ) -> bool {
+    fn point_on_material_boundary(&self, point: Point2, external_boundary: &[[Point2; 2]]) -> bool {
         external_boundary
             .iter()
             .any(|segment| point_on_segment(point, segment[0], segment[1]))
