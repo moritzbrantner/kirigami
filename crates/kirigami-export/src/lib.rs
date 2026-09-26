@@ -195,38 +195,19 @@ pub fn export_fold(
         return Err(ExportError::DegeneratePattern);
     }
 
-    let scale = template_width_mm / source_width;
-    let mut vertices = Vec::<[f32; 2]>::new();
-    let mut edges_vertices = Vec::new();
-    let mut edges_assignment = Vec::new();
-
+    let mut graph = FoldGraphBuilder::new(
+        pattern.bounds.min,
+        template_width_mm / source_width,
+    );
     for segment in &pattern.boundary_segments {
-        push_fold_edge(
-            &mut vertices,
-            &mut edges_vertices,
-            &mut edges_assignment,
-            pattern,
-            scale,
-            segment[0],
-            segment[1],
-            "B",
-        )?;
+        graph.push_edge(segment[0], segment[1], "B")?;
     }
     for segment in &pattern.segments {
         let assignment = match segment.kind {
             OperationKind::Cut => "C",
             OperationKind::Crease => "U",
         };
-        push_fold_edge(
-            &mut vertices,
-            &mut edges_vertices,
-            &mut edges_assignment,
-            pattern,
-            scale,
-            segment.start,
-            segment.end,
-            assignment,
-        )?;
+        graph.push_edge(segment.start, segment.end, assignment)?;
     }
 
     let mut frame_attributes = vec!["2D"];
@@ -245,51 +226,69 @@ pub fn export_fold(
         frame_classes: ["creasePattern"],
         frame_attributes,
         frame_unit: "mm",
-        vertices_coords: vertices,
-        edges_vertices,
-        edges_assignment,
+        vertices_coords: graph.vertices,
+        edges_vertices: graph.edges,
+        edges_assignment: graph.assignments,
     })
     .map(|json| format!("{json}\n"))
     .map_err(|error| ExportError::Serialization(error.to_string()))
 }
 
-fn push_fold_edge(
-    vertices: &mut Vec<[f32; 2]>,
-    edges: &mut Vec<[u32; 2]>,
-    assignments: &mut Vec<&'static str>,
-    pattern: &FlatPatternSnapshot,
+struct FoldGraphBuilder {
+    source_min: Point2,
     scale: f32,
-    start: Point2,
-    end: Point2,
-    assignment: &'static str,
-) -> Result<(), ExportError> {
-    let start = fold_point(pattern, scale, start);
-    let end = fold_point(pattern, scale, end);
-    let start = fold_vertex_id(vertices, start)?;
-    let end = fold_vertex_id(vertices, end)?;
-    edges.push([start, end]);
-    assignments.push(assignment);
-    Ok(())
+    vertices: Vec<[f32; 2]>,
+    edges: Vec<[u32; 2]>,
+    assignments: Vec<&'static str>,
 }
 
-fn fold_vertex_id(vertices: &mut Vec<[f32; 2]>, point: [f32; 2]) -> Result<u32, ExportError> {
-    if let Some(index) = vertices.iter().position(|candidate| {
-        (candidate[0] - point[0]).abs() <= EPSILON && (candidate[1] - point[1]).abs() <= EPSILON
-    }) {
-        return u32::try_from(index).map_err(|error| ExportError::Serialization(error.to_string()));
+impl FoldGraphBuilder {
+    fn new(source_min: Point2, scale: f32) -> Self {
+        Self {
+            source_min,
+            scale,
+            vertices: Vec::new(),
+            edges: Vec::new(),
+            assignments: Vec::new(),
+        }
     }
 
-    let index = u32::try_from(vertices.len())
-        .map_err(|error| ExportError::Serialization(error.to_string()))?;
-    vertices.push(point);
-    Ok(index)
-}
+    fn push_edge(
+        &mut self,
+        start: Point2,
+        end: Point2,
+        assignment: &'static str,
+    ) -> Result<(), ExportError> {
+        let start = self.point(start);
+        let end = self.point(end);
+        let start = self.vertex_id(start)?;
+        let end = self.vertex_id(end)?;
+        self.edges.push([start, end]);
+        self.assignments.push(assignment);
+        Ok(())
+    }
 
-fn fold_point(pattern: &FlatPatternSnapshot, scale: f32, point: Point2) -> [f32; 2] {
-    [
-        (point.x - pattern.bounds.min.x) * scale,
-        (point.y - pattern.bounds.min.y) * scale,
-    ]
+    fn point(&self, point: Point2) -> [f32; 2] {
+        [
+            (point.x - self.source_min.x) * self.scale,
+            (point.y - self.source_min.y) * self.scale,
+        ]
+    }
+
+    fn vertex_id(&mut self, point: [f32; 2]) -> Result<u32, ExportError> {
+        if let Some(index) = self.vertices.iter().position(|candidate| {
+            (candidate[0] - point[0]).abs() <= EPSILON
+                && (candidate[1] - point[1]).abs() <= EPSILON
+        }) {
+            return u32::try_from(index)
+                .map_err(|error| ExportError::Serialization(error.to_string()));
+        }
+
+        let index = u32::try_from(self.vertices.len())
+            .map_err(|error| ExportError::Serialization(error.to_string()))?;
+        self.vertices.push(point);
+        Ok(index)
+    }
 }
 
 fn layout(pattern: &FlatPatternSnapshot, options: PdfExportOptions) -> Result<Layout, ExportError> {
