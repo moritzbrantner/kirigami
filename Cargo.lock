@@ -122,6 +122,8 @@ name = "kirigami-export"
 version = "0.1.0"
 dependencies = [
  "kirigami-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

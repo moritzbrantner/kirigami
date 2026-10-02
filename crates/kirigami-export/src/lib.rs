@@ -3,7 +3,8 @@
 //! Paper semantics remain in `kirigami-core`. This crate only maps a
 //! `FlatPatternSnapshot` into portable print/vector formats.
 
-use kirigami_core::{FlatPatternSnapshot, OperationKind, Point2};
+use kirigami_core::{FlatPatternEdgeKind, FlatPatternSnapshot, OperationKind, Point2};
+use serde::Serialize;
 use std::fmt;
 
 const POINTS_PER_MM: f32 = 72.0 / 25.4;
@@ -36,6 +37,7 @@ pub enum ExportError {
     InvalidTemplateWidth,
     DegeneratePattern,
     TemplateDoesNotFit { width_mm: f32, height_mm: f32 },
+    Serialization(String),
 }
 
 impl fmt::Display for ExportError {
@@ -58,6 +60,7 @@ impl fmt::Display for ExportError {
                 formatter,
                 "template size {width_mm:.1} x {height_mm:.1} mm does not fit the printable page area"
             ),
+            Self::Serialization(error) => write!(formatter, "could not serialize export: {error}"),
         }
     }
 }
@@ -158,6 +161,92 @@ pub fn export_svg(
     }
     svg.push_str("    </g>\n  </g>\n</svg>\n");
     Ok(svg)
+}
+
+#[derive(Debug, Serialize)]
+struct FoldDocument {
+    file_spec: f32,
+    file_creator: &'static str,
+    file_classes: [&'static str; 1],
+    frame_classes: [&'static str; 1],
+    frame_attributes: Vec<&'static str>,
+    frame_unit: &'static str,
+    vertices_coords: Vec<[f32; 2]>,
+    edges_vertices: Vec<[u32; 2]>,
+    edges_assignment: Vec<&'static str>,
+}
+
+/// Exports a FOLD 1.2 crease-pattern graph at an explicit physical width.
+///
+/// External material boundaries use `B`, cuts use the FOLD 1.2 `C`
+/// assignment, and creases remain `U` until Kirigami owns an explicit
+/// mountain/valley assignment. Vertices and edges come from the topology
+/// graph, so crossings and junctions keep one shared vertex identity.
+pub fn export_fold(
+    pattern: &FlatPatternSnapshot,
+    template_width_mm: f32,
+) -> Result<String, ExportError> {
+    if !template_width_mm.is_finite() || template_width_mm <= 0.0 {
+        return Err(ExportError::InvalidTemplateWidth);
+    }
+    let source_width = pattern.bounds.max.x - pattern.bounds.min.x;
+    let source_height = pattern.bounds.max.y - pattern.bounds.min.y;
+    if source_width <= EPSILON || source_height <= EPSILON {
+        return Err(ExportError::DegeneratePattern);
+    }
+
+    let scale = template_width_mm / source_width;
+    let vertices_coords = pattern
+        .graph
+        .vertices
+        .iter()
+        .map(|point| {
+            [
+                (point.x - pattern.bounds.min.x) * scale,
+                (point.y - pattern.bounds.min.y) * scale,
+            ]
+        })
+        .collect();
+    let edges_vertices = pattern
+        .graph
+        .edges
+        .iter()
+        .map(|edge| edge.vertices)
+        .collect();
+    let edges_assignment = pattern
+        .graph
+        .edges
+        .iter()
+        .map(|edge| match edge.kind {
+            FlatPatternEdgeKind::Boundary => "B",
+            FlatPatternEdgeKind::Cut => "C",
+            FlatPatternEdgeKind::Crease => "U",
+        })
+        .collect();
+
+    let mut frame_attributes = vec!["2D"];
+    if pattern
+        .graph
+        .edges
+        .iter()
+        .any(|edge| edge.kind == FlatPatternEdgeKind::Cut)
+    {
+        frame_attributes.push("cuts");
+    }
+
+    serde_json::to_string_pretty(&FoldDocument {
+        file_spec: 1.2,
+        file_creator: "kirigami",
+        file_classes: ["singleModel"],
+        frame_classes: ["creasePattern"],
+        frame_attributes,
+        frame_unit: "mm",
+        vertices_coords,
+        edges_vertices,
+        edges_assignment,
+    })
+    .map(|json| format!("{json}\n"))
+    .map_err(|error| ExportError::Serialization(error.to_string()))
 }
 
 fn layout(pattern: &FlatPatternSnapshot, options: PdfExportOptions) -> Result<Layout, ExportError> {
@@ -378,5 +467,169 @@ mod tests {
             export_pdf(&sample_pattern(), PdfExportOptions::a4(250.0)),
             Err(ExportError::TemplateDoesNotFit { .. })
         ));
+    }
+    #[test]
+    fn fold_export_preserves_crossing_vertices_and_unassigned_creases() {
+        let mut model = PaperModel::rectangle(2.0, 2.0).unwrap();
+        model
+            .split_across_panels_with_polyline(
+                &[Point2::new(0.0, -1.0), Point2::new(0.0, 1.0)],
+                OperationKind::Crease,
+            )
+            .unwrap();
+        model
+            .split_across_panels_with_polyline(
+                &[Point2::new(-1.0, 0.0), Point2::new(1.0, 0.0)],
+                OperationKind::Crease,
+            )
+            .unwrap();
+
+        let fold = export_fold(&model.flat_pattern_snapshot().unwrap(), 180.0).unwrap();
+        let document: serde_json::Value = serde_json::from_str(&fold).unwrap();
+        assert_eq!(document["file_spec"], 1.2);
+        assert_eq!(document["frame_unit"], "mm");
+        assert_eq!(document["frame_classes"][0], "creasePattern");
+        let vertices = document["vertices_coords"].as_array().unwrap();
+        assert!(vertices.iter().any(|vertex| {
+            vertex[0].as_f64() == Some(90.0) && vertex[1].as_f64() == Some(90.0)
+        }));
+        let assignments = document["edges_assignment"].as_array().unwrap();
+        assert_eq!(
+            assignments
+                .iter()
+                .filter(|assignment| assignment.as_str() == Some("U"))
+                .count(),
+            4
+        );
+    }
+
+    #[test]
+    fn fold_export_marks_kirigami_cuts_with_fold_1_2_cut_assignment() {
+        let mut model = PaperModel::rectangle(2.0, 1.0).unwrap();
+        model
+            .split_panel_with_segment(
+                PanelId(0),
+                Point2::new(0.0, -0.5),
+                Point2::new(0.0, 0.5),
+                OperationKind::Cut,
+            )
+            .unwrap();
+
+        let fold = export_fold(&model.flat_pattern_snapshot().unwrap(), 180.0).unwrap();
+        let document: serde_json::Value = serde_json::from_str(&fold).unwrap();
+        assert!(
+            document["frame_attributes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|attribute| attribute.as_str() == Some("cuts"))
+        );
+        assert!(
+            document["edges_assignment"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|assignment| assignment.as_str() == Some("C"))
+        );
+    }
+
+    fn assert_fold_graph_has_no_t_junctions(fold: &str) {
+        let document: serde_json::Value = serde_json::from_str(fold).unwrap();
+        let vertices: Vec<[f64; 2]> = document["vertices_coords"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|vertex| [vertex[0].as_f64().unwrap(), vertex[1].as_f64().unwrap()])
+            .collect();
+        let edges: Vec<[usize; 2]> = document["edges_vertices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|edge| {
+                [
+                    edge[0].as_u64().unwrap() as usize,
+                    edge[1].as_u64().unwrap() as usize,
+                ]
+            })
+            .collect();
+        let mut degree = vec![0; vertices.len()];
+        for edge in &edges {
+            degree[edge[0]] += 1;
+            degree[edge[1]] += 1;
+        }
+        assert!(
+            degree.iter().all(|degree| *degree >= 2),
+            "dangling vertex: {degree:?}"
+        );
+        for edge in &edges {
+            let [a, b] = [vertices[edge[0]], vertices[edge[1]]];
+            for (index, point) in vertices.iter().enumerate() {
+                if edge.contains(&index) {
+                    continue;
+                }
+                let ab = [b[0] - a[0], b[1] - a[1]];
+                let ap = [point[0] - a[0], point[1] - a[1]];
+                let length = (ab[0] * ab[0] + ab[1] * ab[1]).sqrt();
+                let distance = (ab[0] * ap[1] - ab[1] * ap[0]).abs() / length;
+                let t = (ap[0] * ab[0] + ap[1] * ab[1]) / (length * length);
+                assert!(
+                    distance > 1.0e-3 || t <= 1.0e-6 || t >= 1.0 - 1.0e-6,
+                    "vertex {index} lies inside edge {edge:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn fold_export_splits_cut_edges_where_a_boundary_bridge_ends() {
+        let mut model = PaperModel::rectangle(2.4, 1.6).unwrap();
+        model
+            .cut_closed_path(
+                PanelId(0),
+                &[
+                    Point2::new(-0.45, -0.35),
+                    Point2::new(0.45, -0.35),
+                    Point2::new(0.45, 0.35),
+                    Point2::new(-0.45, 0.35),
+                ],
+            )
+            .unwrap();
+        model
+            .cut_boundary_bridge(
+                PanelId(0),
+                &[Point2::new(-1.2, 0.0), Point2::new(-0.45, 0.0)],
+            )
+            .unwrap();
+
+        let fold = export_fold(&model.flat_pattern_snapshot().unwrap(), 180.0).unwrap();
+        assert_fold_graph_has_no_t_junctions(&fold);
+        let document: serde_json::Value = serde_json::from_str(&fold).unwrap();
+        let cuts = document["edges_assignment"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|assignment| assignment.as_str() == Some("C"))
+            .count();
+        // Four hole edges, one of them split by the bridge junction, plus the bridge.
+        assert_eq!(cuts, 6);
+    }
+
+    #[test]
+    fn fold_export_reuses_topology_vertices_for_snapped_endpoints() {
+        let mut model = PaperModel::rectangle(2.0, 1.0).unwrap();
+        model
+            .split_panel_with_segment(
+                PanelId(0),
+                Point2::new(-0.999995, -0.5),
+                Point2::new(0.0, 0.5),
+                OperationKind::Crease,
+            )
+            .unwrap();
+
+        let fold = export_fold(&model.flat_pattern_snapshot().unwrap(), 180.0).unwrap();
+        assert_fold_graph_has_no_t_junctions(&fold);
+        let document: serde_json::Value = serde_json::from_str(&fold).unwrap();
+        assert_eq!(document["vertices_coords"].as_array().unwrap().len(), 5);
+        assert_eq!(document["edges_vertices"].as_array().unwrap().len(), 6);
     }
 }

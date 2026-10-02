@@ -41,6 +41,15 @@ pub struct PlanarTopology {
     faces: Vec<Face>,
 }
 
+/// One undirected topology edge expressed with authoritative vertex identities.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TopologyEdge {
+    pub start: VertexId,
+    pub end: VertexId,
+    /// Twin-less edges are the external material boundary.
+    pub external_boundary: bool,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct FaceTriangulation {
     pub vertices: Vec<Point2>,
@@ -211,6 +220,27 @@ impl PlanarTopology {
                 let start = self.vertex(edge.origin).point;
                 let end = self.vertex(self.edge(edge.next).origin).point;
                 [start, end]
+            })
+            .collect()
+    }
+
+    pub fn vertex_point(&self, id: VertexId) -> Option<Point2> {
+        self.vertices.get(id.0 as usize).map(|vertex| vertex.point)
+    }
+
+    /// Returns every undirected edge once, in deterministic half-edge order.
+    ///
+    /// Operations that end on an existing edge split it, so these edges already carry
+    /// every junction vertex and share vertex identities with the rest of the graph.
+    pub fn undirected_edges(&self) -> Vec<TopologyEdge> {
+        self.half_edges
+            .iter()
+            .enumerate()
+            .filter(|(index, edge)| edge.twin.is_none_or(|twin| twin.0 as usize > *index))
+            .map(|(_, edge)| TopologyEdge {
+                start: edge.origin,
+                end: self.edge(edge.next).origin,
+                external_boundary: edge.twin.is_none(),
             })
             .collect()
     }
