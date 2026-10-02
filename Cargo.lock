@@ -114,7 +114,7 @@ dependencies = [
  "geometry-kernels",
  "serde",
  "spatial-kernels",
- "three-d-core",
+ "three-d-core 0.1.0 (git+https://github.com/moritzbrantner/3d-lab?rev=419333a7ecedc94a99bfc6b940fbdbcfc7bec958)",
 ]
 
 [[package]]
@@ -134,7 +134,7 @@ dependencies = [
  "serde_json",
  "three-d-animation",
  "three-d-assets",
- "three-d-core",
+ "three-d-core 0.1.0 (git+https://github.com/moritzbrantner/3d-lab?rev=419333a7ecedc94a99bfc6b940fbdbcfc7bec958)",
  "three-d-formats",
 ]
 
@@ -273,9 +273,9 @@ dependencies = [
 [[package]]
 name = "three-d-animation"
 version = "0.1.0"
-source = "git+https://github.com/moritzbrantner/3d-lab?rev=419333a7ecedc94a99bfc6b940fbdbcfc7bec958#419333a7ecedc94a99bfc6b940fbdbcfc7bec958"
+source = "git+https://github.com/moritzbrantner/3d-lab?rev=5340bdf31de6761ed16737dd6d19da2431172fd6#5340bdf31de6761ed16737dd6d19da2431172fd6"
 dependencies = [
- "three-d-core",
+ "three-d-core 0.1.0 (git+https://github.com/moritzbrantner/3d-lab?rev=5340bdf31de6761ed16737dd6d19da2431172fd6)",
 ]
 
 [[package]]
@@ -283,13 +283,18 @@ name = "three-d-assets"
 version = "0.1.0"
 source = "git+https://github.com/moritzbrantner/3d-lab?rev=419333a7ecedc94a99bfc6b940fbdbcfc7bec958#419333a7ecedc94a99bfc6b940fbdbcfc7bec958"
 dependencies = [
- "three-d-core",
+ "three-d-core 0.1.0 (git+https://github.com/moritzbrantner/3d-lab?rev=419333a7ecedc94a99bfc6b940fbdbcfc7bec958)",
 ]
 
 [[package]]
 name = "three-d-core"
 version = "0.1.0"
 source = "git+https://github.com/moritzbrantner/3d-lab?rev=419333a7ecedc94a99bfc6b940fbdbcfc7bec958#419333a7ecedc94a99bfc6b940fbdbcfc7bec958"
+
+[[package]]
+name = "three-d-core"
+version = "0.1.0"
+source = "git+https://github.com/moritzbrantner/3d-lab?rev=5340bdf31de6761ed16737dd6d19da2431172fd6#5340bdf31de6761ed16737dd6d19da2431172fd6"
 
 [[package]]
 name = "three-d-formats"
@@ -299,7 +304,7 @@ dependencies = [
  "base64",
  "gltf",
  "three-d-assets",
- "three-d-core",
+ "three-d-core 0.1.0 (git+https://github.com/moritzbrantner/3d-lab?rev=419333a7ecedc94a99bfc6b940fbdbcfc7bec958)",
  "tobj",
 ]
 
