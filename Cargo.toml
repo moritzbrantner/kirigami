@@ -15,7 +15,7 @@ rust-version = "1.85"
 
 [workspace.dependencies]
 serde = { version = "=1.0.229", features = ["derive"] }
-serde_json = "=1.0.151"
+serde_json = "=1.0.152"
 earcut = "=0.4.11"
 wasm-bindgen = "=0.2.129"
 bvh-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "2eb5fead99fafb2e2e47b5fa0bbe28e64caddc59" }
