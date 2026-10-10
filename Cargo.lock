@@ -23,9 +23,9 @@ checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
 [[package]]
 name = "bvh-kernels"
 version = "0.1.0"
-source = "git+https://github.com/moritzbrantner/rust-kernels?rev=980091094a9826167a98b96781126595fbea5076#980091094a9826167a98b96781126595fbea5076"
+source = "git+https://github.com/moritzbrantner/rust-kernels?rev=b3e2bf8f84958dc84598422beb5e00ca6841b803#b3e2bf8f84958dc84598422beb5e00ca6841b803"
 dependencies = [
- "spatial-kernels 0.1.0 (git+https://github.com/moritzbrantner/rust-kernels?rev=980091094a9826167a98b96781126595fbea5076)",
+ "spatial-kernels",
 ]
 
 [[package]]
@@ -54,7 +54,7 @@ name = "geometry-kernels"
 version = "0.1.0"
 source = "git+https://github.com/moritzbrantner/rust-kernels?rev=b3e2bf8f84958dc84598422beb5e00ca6841b803#b3e2bf8f84958dc84598422beb5e00ca6841b803"
 dependencies = [
- "spatial-kernels 0.1.0 (git+https://github.com/moritzbrantner/rust-kernels?rev=b3e2bf8f84958dc84598422beb5e00ca6841b803)",
+ "spatial-kernels",
 ]
 
 [[package]]
@@ -113,7 +113,7 @@ dependencies = [
  "earcut",
  "geometry-kernels",
  "serde",
- "spatial-kernels 0.1.0 (git+https://github.com/moritzbrantner/rust-kernels?rev=980091094a9826167a98b96781126595fbea5076)",
+ "spatial-kernels",
  "three-d-core",
 ]
 
@@ -246,11 +246,6 @@ dependencies = [
 [[package]]
 name = "spatial-kernels"
 version = "0.1.0"
-source = "git+https://github.com/moritzbrantner/rust-kernels?rev=980091094a9826167a98b96781126595fbea5076#980091094a9826167a98b96781126595fbea5076"
-
-[[package]]
-name = "spatial-kernels"
-version = "0.1.0"
 source = "git+https://github.com/moritzbrantner/rust-kernels?rev=b3e2bf8f84958dc84598422beb5e00ca6841b803#b3e2bf8f84958dc84598422beb5e00ca6841b803"
 
 [[package]]
@@ -278,7 +273,7 @@ dependencies = [
 [[package]]
 name = "three-d-animation"
 version = "0.1.0"
-source = "git+https://github.com/moritzbrantner/3d-lab?rev=419333a7ecedc94a99bfc6b940fbdbcfc7bec958#419333a7ecedc94a99bfc6b940fbdbcfc7bec958"
+source = "git+https://github.com/moritzbrantner/3d-lab?rev=5340bdf31de6761ed16737dd6d19da2431172fd6#5340bdf31de6761ed16737dd6d19da2431172fd6"
 dependencies = [
  "three-d-core",
 ]
@@ -286,23 +281,25 @@ dependencies = [
 [[package]]
 name = "three-d-assets"
 version = "0.1.0"
-source = "git+https://github.com/moritzbrantner/3d-lab?rev=419333a7ecedc94a99bfc6b940fbdbcfc7bec958#419333a7ecedc94a99bfc6b940fbdbcfc7bec958"
+source = "git+https://github.com/moritzbrantner/3d-lab?rev=5340bdf31de6761ed16737dd6d19da2431172fd6#5340bdf31de6761ed16737dd6d19da2431172fd6"
 dependencies = [
+ "three-d-animation",
  "three-d-core",
 ]
 
 [[package]]
 name = "three-d-core"
 version = "0.1.0"
-source = "git+https://github.com/moritzbrantner/3d-lab?rev=419333a7ecedc94a99bfc6b940fbdbcfc7bec958#419333a7ecedc94a99bfc6b940fbdbcfc7bec958"
+source = "git+https://github.com/moritzbrantner/3d-lab?rev=5340bdf31de6761ed16737dd6d19da2431172fd6#5340bdf31de6761ed16737dd6d19da2431172fd6"
 
 [[package]]
 name = "three-d-formats"
 version = "0.1.0"
-source = "git+https://github.com/moritzbrantner/3d-lab?rev=419333a7ecedc94a99bfc6b940fbdbcfc7bec958#419333a7ecedc94a99bfc6b940fbdbcfc7bec958"
+source = "git+https://github.com/moritzbrantner/3d-lab?rev=5340bdf31de6761ed16737dd6d19da2431172fd6#5340bdf31de6761ed16737dd6d19da2431172fd6"
 dependencies = [
  "base64",
  "gltf",
+ "three-d-animation",
  "three-d-assets",
  "three-d-core",
  "tobj",
