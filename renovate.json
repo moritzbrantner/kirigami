@@ -1,4 +1,12 @@
 {
   "extends": ["config:recommended"],
-  "rangeStrategy": "pin"
+  "rangeStrategy": "pin",
+  "packageRules": [
+    {
+      "description": "rust-kernels crates share types (spatial-kernels::Body) and must move to the same commit together",
+      "matchManagers": ["cargo"],
+      "matchDepNames": ["*-kernels"],
+      "groupName": "rust-kernels"
+    }
+  ]
 }
