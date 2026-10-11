@@ -24,4 +24,4 @@ spatial-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev 
 three-d-animation = { git = "https://github.com/moritzbrantner/3d-lab", rev = "5340bdf31de6761ed16737dd6d19da2431172fd6", package = "three-d-animation" }
 three-d-assets = { git = "https://github.com/moritzbrantner/3d-lab", rev = "5340bdf31de6761ed16737dd6d19da2431172fd6", package = "three-d-assets" }
 three-d-core = { git = "https://github.com/moritzbrantner/3d-lab", rev = "5340bdf31de6761ed16737dd6d19da2431172fd6", package = "three-d-core" }
-three-d-formats = { git = "https://github.com/moritzbrantner/3d-lab", rev = "5340bdf31de6761ed16737dd6d19da2431172fd6", package = "three-d-formats" }
+three-d-formats = { git = "https://github.com/moritzbrantner/3d-lab", rev = "a39a673e319299c6186d07b1ced5644587b17509", package = "three-d-formats" }
