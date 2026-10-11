@@ -7,6 +7,12 @@
       "matchManagers": ["cargo"],
       "matchDepNames": ["*-kernels"],
       "groupName": "rust-kernels"
+    },
+    {
+      "description": "3d-lab crates share types (three-d-core) and must move to the same commit together",
+      "matchManagers": ["cargo"],
+      "matchDepNames": ["three-d-*"],
+      "groupName": "3d-lab"
     }
   ]
 }
