@@ -1,17 +1,27 @@
 {
-  "extends": ["config:recommended"],
+  "extends": [
+    "github>moritzbrantner/coding-agent-conventions"
+  ],
   "rangeStrategy": "pin",
   "packageRules": [
     {
       "description": "rust-kernels crates share types (spatial-kernels::Body) and must move to the same commit together",
-      "matchManagers": ["cargo"],
-      "matchDepNames": ["*-kernels"],
+      "matchManagers": [
+        "cargo"
+      ],
+      "matchDepNames": [
+        "*-kernels"
+      ],
       "groupName": "rust-kernels"
     },
     {
       "description": "3d-lab crates share types (three-d-core) and must move to the same commit together",
-      "matchManagers": ["cargo"],
-      "matchDepNames": ["three-d-*"],
+      "matchManagers": [
+        "cargo"
+      ],
+      "matchDepNames": [
+        "three-d-*"
+      ],
       "groupName": "3d-lab"
     }
   ]
