@@ -25,3 +25,39 @@ jobs:
         run: cargo test --locked --workspace --all-targets
       - name: WASM compile
         run: cargo build --locked -p kirigami-wasm --target wasm32-unknown-unknown --release
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --locked --version 0.13.1
+      - name: Build WASM package
+        run: wasm-pack build crates/kirigami-wasm --target web --release --out-dir ../../dist/pkg
+      - name: Assemble site
+        run: |
+          cp web/index.html web/app.js web/style.css dist/
+          touch dist/.nojekyll
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+        if: github.event_name == 'push'
+        with:
+          enablement: true
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        if: github.event_name == 'push'
+        with:
+          path: dist
+
+  merge-ready:
+    name: merge-ready
+    if: always()
+    needs: ["validate", "build"]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require successful validation
+        uses: moritzbrantner/reusable-workflows/.github/actions/merge-ready@b0f25f241d76af2584dfc9e375084ff5c5cb97da
+        with:
+          needs: ${{ toJSON(needs) }}
+          required: '["validate", "build"]'
