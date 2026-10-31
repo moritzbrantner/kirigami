@@ -349,7 +349,7 @@ impl PlanarTopology {
         Err(TopologyError::InvalidTopology)
     }
 
-    fn face_vertex_ids(&self, face: FaceId) -> Result<Vec<VertexId>, TopologyError> {
+    pub(crate) fn face_vertex_ids(&self, face: FaceId) -> Result<Vec<VertexId>, TopologyError> {
         let mut vertices = Vec::new();
         for boundary in self.face_boundary_half_edges(face)? {
             for edge_id in boundary {

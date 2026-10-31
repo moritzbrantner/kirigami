@@ -31,7 +31,7 @@ pub use topology::{
 };
 
 use serde::Serialize;
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 const EPSILON: f32 = 1.0e-5;
 
@@ -157,41 +157,49 @@ impl PaperModel {
         if self.panels.is_empty() {
             return 0;
         }
+        let adjacency = self.crease_adjacency(None);
         let mut visited = HashSet::new();
         let mut count = 0;
         for panel in &self.panels {
-            if visited.contains(&panel.id) {
-                continue;
-            }
-            count += 1;
-            let mut queue = VecDeque::from([panel.id]);
-            visited.insert(panel.id);
-            while let Some(current) = queue.pop_front() {
-                for seam in self
-                    .seams
-                    .iter()
-                    .filter(|seam| seam.kind == OperationKind::Crease)
-                {
-                    let neighbor = adjacent_panel(seam, current);
-                    match neighbor {
-                        Some(neighbor) if visited.insert(neighbor) => {
-                            queue.push_back(neighbor);
-                        }
-                        _ => {}
-                    }
-                }
+            if visited.insert(panel.id) {
+                count += 1;
+                visit_connected(&adjacency, VecDeque::from([panel.id]), &mut visited);
             }
         }
         count
     }
+
+    /// Panels joined by each crease seam, optionally ignoring one operation's seams.
+    fn crease_adjacency(&self, excluded: Option<OperationId>) -> HashMap<PanelId, Vec<PanelId>> {
+        let mut adjacency = HashMap::<PanelId, Vec<PanelId>>::new();
+        for seam in self
+            .seams
+            .iter()
+            .filter(|seam| seam.kind == OperationKind::Crease && Some(seam.operation) != excluded)
+        {
+            adjacency
+                .entry(seam.panel_a)
+                .or_default()
+                .push(seam.panel_b);
+            adjacency
+                .entry(seam.panel_b)
+                .or_default()
+                .push(seam.panel_a);
+        }
+        adjacency
+    }
 }
 
-fn adjacent_panel(seam: &Seam, panel: PanelId) -> Option<PanelId> {
-    if seam.panel_a == panel {
-        Some(seam.panel_b)
-    } else if seam.panel_b == panel {
-        Some(seam.panel_a)
-    } else {
-        None
+fn visit_connected(
+    adjacency: &HashMap<PanelId, Vec<PanelId>>,
+    mut queue: VecDeque<PanelId>,
+    visited: &mut HashSet<PanelId>,
+) {
+    while let Some(current) = queue.pop_front() {
+        for neighbor in adjacency.get(&current).into_iter().flatten() {
+            if visited.insert(*neighbor) {
+                queue.push_back(*neighbor);
+            }
+        }
     }
 }

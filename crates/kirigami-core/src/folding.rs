@@ -1,9 +1,9 @@
 use crate::geometry::path_is_straight;
 use crate::{
     EPSILON, FoldRequest, ModelError, OperationId, OperationKind, PanelId, PaperModel,
-    adjacent_panel,
+    visit_connected,
 };
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 use three_d_core::Vec3;
 
 impl PaperModel {
@@ -111,23 +111,9 @@ impl PaperModel {
         seeds: &HashSet<PanelId>,
         excluded: OperationId,
     ) -> HashSet<PanelId> {
+        let adjacency = self.crease_adjacency(Some(excluded));
         let mut visited = seeds.clone();
-        let mut queue: VecDeque<PanelId> = seeds.iter().copied().collect();
-        while let Some(current) = queue.pop_front() {
-            for seam in self
-                .seams
-                .iter()
-                .filter(|seam| seam.kind == OperationKind::Crease && seam.operation != excluded)
-            {
-                let neighbor = adjacent_panel(seam, current);
-                match neighbor {
-                    Some(neighbor) if visited.insert(neighbor) => {
-                        queue.push_back(neighbor);
-                    }
-                    _ => {}
-                }
-            }
-        }
+        visit_connected(&adjacency, seeds.iter().copied().collect(), &mut visited);
         visited
     }
 }

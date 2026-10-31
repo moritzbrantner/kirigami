@@ -1,4 +1,5 @@
 use crate::render::RenderSnapshot;
+use crate::topology::VertexId;
 use crate::{FoldRequest, ModelError, PanelId, PaperModel};
 use bvh_kernels::StaticBvh;
 use geometry_kernels::{
@@ -7,7 +8,7 @@ use geometry_kernels::{
 };
 use serde::Serialize;
 use spatial_kernels::{Aabb, Body};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 const CONTACT_INSET_RATIO: f64 = 1.0e-6;
 
@@ -79,12 +80,16 @@ impl PaperModel {
             .filter(|seam| seam.panel_a != seam.panel_b)
             .map(|seam| canonical_panel_pair(seam.panel_a, seam.panel_b))
             .collect();
-        for left_index in 0..self.panels.len() {
-            for right_index in (left_index + 1)..self.panels.len() {
-                let left = &self.panels[left_index];
-                let right = &self.panels[right_index];
-                if self.topology.faces_share_vertex(left.face, right.face)? {
-                    contacts.insert(canonical_panel_pair(left.id, right.id));
+        let mut panels_at_vertex = HashMap::<VertexId, Vec<PanelId>>::new();
+        for panel in &self.panels {
+            for vertex in self.topology.face_vertex_ids(panel.face)? {
+                panels_at_vertex.entry(vertex).or_default().push(panel.id);
+            }
+        }
+        for panels in panels_at_vertex.values() {
+            for (index, left) in panels.iter().enumerate() {
+                for right in &panels[index + 1..] {
+                    contacts.insert(canonical_panel_pair(*left, *right));
                 }
             }
         }
