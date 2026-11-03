@@ -267,7 +267,7 @@ dependencies = [
 [[package]]
 name = "three-d-animation"
 version = "0.1.0"
-source = "git+https://github.com/moritzbrantner/3d-lab?rev=fb85102248b55e0a3f767cfc6ffcd141f45e710c#fb85102248b55e0a3f767cfc6ffcd141f45e710c"
+source = "git+https://github.com/moritzbrantner/3d-lab?rev=5926fe6a87ca882c637fdd8729624730d0b4b9fd#5926fe6a87ca882c637fdd8729624730d0b4b9fd"
 dependencies = [
  "three-d-core",
 ]
@@ -275,7 +275,7 @@ dependencies = [
 [[package]]
 name = "three-d-assets"
 version = "0.1.0"
-source = "git+https://github.com/moritzbrantner/3d-lab?rev=fb85102248b55e0a3f767cfc6ffcd141f45e710c#fb85102248b55e0a3f767cfc6ffcd141f45e710c"
+source = "git+https://github.com/moritzbrantner/3d-lab?rev=5926fe6a87ca882c637fdd8729624730d0b4b9fd#5926fe6a87ca882c637fdd8729624730d0b4b9fd"
 dependencies = [
  "three-d-animation",
  "three-d-core",
@@ -284,12 +284,12 @@ dependencies = [
 [[package]]
 name = "three-d-core"
 version = "0.1.0"
-source = "git+https://github.com/moritzbrantner/3d-lab?rev=fb85102248b55e0a3f767cfc6ffcd141f45e710c#fb85102248b55e0a3f767cfc6ffcd141f45e710c"
+source = "git+https://github.com/moritzbrantner/3d-lab?rev=5926fe6a87ca882c637fdd8729624730d0b4b9fd#5926fe6a87ca882c637fdd8729624730d0b4b9fd"
 
 [[package]]
 name = "three-d-formats"
 version = "0.1.0"
-source = "git+https://github.com/moritzbrantner/3d-lab?rev=fb85102248b55e0a3f767cfc6ffcd141f45e710c#fb85102248b55e0a3f767cfc6ffcd141f45e710c"
+source = "git+https://github.com/moritzbrantner/3d-lab?rev=5926fe6a87ca882c637fdd8729624730d0b4b9fd#5926fe6a87ca882c637fdd8729624730d0b4b9fd"
 dependencies = [
  "base64",
  "gltf",
@@ -303,7 +303,7 @@ dependencies = [
 [[package]]
 name = "three-d-rigged-assets"
 version = "0.1.0"
-source = "git+https://github.com/moritzbrantner/3d-lab?rev=fb85102248b55e0a3f767cfc6ffcd141f45e710c#fb85102248b55e0a3f767cfc6ffcd141f45e710c"
+source = "git+https://github.com/moritzbrantner/3d-lab?rev=5926fe6a87ca882c637fdd8729624730d0b4b9fd#5926fe6a87ca882c637fdd8729624730d0b4b9fd"
 dependencies = [
  "three-d-animation",
  "three-d-core",
