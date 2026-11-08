@@ -21,7 +21,7 @@ wasm-bindgen = "=0.2.130"
 bvh-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "eb73174e157eef58801ee6fe9f7d60e206229adb" }
 geometry-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "eb73174e157eef58801ee6fe9f7d60e206229adb" }
 spatial-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "eb73174e157eef58801ee6fe9f7d60e206229adb" }
-three-d-animation = { git = "https://github.com/moritzbrantner/3d-lab", rev = "6b04dc4bc16f9bcd65c1bc755254370012065e61", package = "three-d-animation" }
-three-d-assets = { git = "https://github.com/moritzbrantner/3d-lab", rev = "6b04dc4bc16f9bcd65c1bc755254370012065e61", package = "three-d-assets" }
-three-d-core = { git = "https://github.com/moritzbrantner/3d-lab", rev = "6b04dc4bc16f9bcd65c1bc755254370012065e61", package = "three-d-core" }
-three-d-formats = { git = "https://github.com/moritzbrantner/3d-lab", rev = "6b04dc4bc16f9bcd65c1bc755254370012065e61", package = "three-d-formats" }
+three-d-animation = { git = "https://github.com/moritzbrantner/3d-lab", rev = "21e916dcea8859334e800ed7a4f075a287a70edc", package = "three-d-animation" }
+three-d-assets = { git = "https://github.com/moritzbrantner/3d-lab", rev = "21e916dcea8859334e800ed7a4f075a287a70edc", package = "three-d-assets" }
+three-d-core = { git = "https://github.com/moritzbrantner/3d-lab", rev = "21e916dcea8859334e800ed7a4f075a287a70edc", package = "three-d-core" }
+three-d-formats = { git = "https://github.com/moritzbrantner/3d-lab", rev = "21e916dcea8859334e800ed7a4f075a287a70edc", package = "three-d-formats" }
