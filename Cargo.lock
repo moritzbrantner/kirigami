@@ -23,7 +23,7 @@ checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
 [[package]]
 name = "bvh-kernels"
 version = "0.1.0"
-source = "git+https://github.com/moritzbrantner/rust-kernels?rev=c219e947ad361e79c3c38e843854c73f8fbe9071#c219e947ad361e79c3c38e843854c73f8fbe9071"
+source = "git+https://github.com/moritzbrantner/rust-kernels?rev=593b133961bedf96b4b76e26a2c7128dc3d5ce87#593b133961bedf96b4b76e26a2c7128dc3d5ce87"
 dependencies = [
  "spatial-kernels",
 ]
@@ -52,7 +52,7 @@ dependencies = [
 [[package]]
 name = "geometry-kernels"
 version = "0.1.0"
-source = "git+https://github.com/moritzbrantner/rust-kernels?rev=c219e947ad361e79c3c38e843854c73f8fbe9071#c219e947ad361e79c3c38e843854c73f8fbe9071"
+source = "git+https://github.com/moritzbrantner/rust-kernels?rev=593b133961bedf96b4b76e26a2c7128dc3d5ce87#593b133961bedf96b4b76e26a2c7128dc3d5ce87"
 dependencies = [
  "spatial-kernels",
 ]
@@ -240,7 +240,7 @@ dependencies = [
 [[package]]
 name = "spatial-kernels"
 version = "0.1.0"
-source = "git+https://github.com/moritzbrantner/rust-kernels?rev=c219e947ad361e79c3c38e843854c73f8fbe9071#c219e947ad361e79c3c38e843854c73f8fbe9071"
+source = "git+https://github.com/moritzbrantner/rust-kernels?rev=593b133961bedf96b4b76e26a2c7128dc3d5ce87#593b133961bedf96b4b76e26a2c7128dc3d5ce87"
 
 [[package]]
 name = "syn"
