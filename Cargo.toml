@@ -18,9 +18,9 @@ serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
 earcut = "=0.4.12"
 wasm-bindgen = "=0.2.130"
-bvh-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "eb807d2b8a4cc91098b9a77b82dbc612467d23c1" }
-geometry-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "eb807d2b8a4cc91098b9a77b82dbc612467d23c1" }
-spatial-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "eb807d2b8a4cc91098b9a77b82dbc612467d23c1" }
+bvh-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "7c4cc7c9e1c432969a28304db39f8b11e08f8129" }
+geometry-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "7c4cc7c9e1c432969a28304db39f8b11e08f8129" }
+spatial-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "7c4cc7c9e1c432969a28304db39f8b11e08f8129" }
 three-d-animation = { git = "https://github.com/moritzbrantner/3d-lab", rev = "8d962726e9224a8b2ef86eb437db3b52cd7da031", package = "three-d-animation" }
 three-d-assets = { git = "https://github.com/moritzbrantner/3d-lab", rev = "8d962726e9224a8b2ef86eb437db3b52cd7da031", package = "three-d-assets" }
 three-d-core = { git = "https://github.com/moritzbrantner/3d-lab", rev = "8d962726e9224a8b2ef86eb437db3b52cd7da031", package = "three-d-core" }
